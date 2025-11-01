@@ -1,0 +1,7 @@
+# USDJPY M5 ATR-based SL/TP
+SLTP_CalcMode=UseATR
+SL_ATR_Mult=1.0
+TP_ATR_Mult=1.5
+UseTrailing=true
+TrailStartPips=4.0
+TrailStepPips=1.0

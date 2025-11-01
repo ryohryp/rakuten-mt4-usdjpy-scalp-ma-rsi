@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# MT4/MetaEditor
+*.ex4
+*.ex5
+*.mqh~
+*.log
+*.tmp
+
+# Backtest outputs (大きいものは追わない)
+backtests/reports/*.html
+backtests/reports/*.htm
+backtests/reports/*.png
+backtests/reports/*.gif
+
+# Archives
+*.zip
+*.7z
+*.rar

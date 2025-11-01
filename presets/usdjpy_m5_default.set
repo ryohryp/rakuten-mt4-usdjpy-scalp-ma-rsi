@@ -1,0 +1,27 @@
+# USDJPY M5 default
+InpTimeframe=PERIOD_M5
+FastEMA=5
+SlowEMA=20
+RSIPeriod=14
+RSIThreshMid=50
+LotMode=RiskPercent
+FixedLots=0.10
+RiskPercentPerTrade=1.0
+SLTP_CalcMode=UseFixed
+SL_FixedPips=6.0
+TP_FixedPips=9.0
+ATRPeriod=14
+SL_ATR_Mult=1.0
+TP_ATR_Mult=1.5
+UseTrailing=true
+TrailStartPips=5.0
+TrailStepPips=1.0
+MaxSpreadPips=0.4
+SlippagePoints=3
+CooldownMinutes=5
+MaxTradesPerDay=20
+MaxConsecLoss=3
+UseTokyo=true
+UseEurope=true
+UseNY=true
+MagicNumber=20251101
