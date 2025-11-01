@@ -27,15 +27,20 @@ input bool     UseTrailing       = true;
 input double   TrailStartPips    = 5.0;
 input double   TrailStepPips     = 1.0;
 
-input double   MaxSpreadPips     = 0.4;      // 0.4銭 = 0.04円 = 4pips?（※JPYのpip=0.01円）
+input double   MaxSpreadPips     = 2.0;      // USDJPY: 約0.2銭（1pip=0.01円）
 input int      SlippagePoints    = 3;
 input int      CooldownMinutes   = 5;
 input int      MaxTradesPerDay   = 20;
 input int      MaxConsecLoss     = 3;
 
-input bool     UseTokyo          = true;
-input bool     UseEurope         = true;
-input bool     UseNY             = true;
+input bool     UseTokyo          = false;
+input bool     UseEurope         = false;
+input bool     UseNY             = false;
+input bool     UseManualSessionFilter = false;  // 手動指定レンジを使用する場合はtrue
+input string   ManualSessionRanges   = "";     // 例 "09:00-11:30;14:00-16:00"（UseManualSessionFilter=true時）
+
+input bool     DebugMode         = true;
+input double   MinATR_Pips       = 0.0;      // 0で無効。低ボラ回避時に設定
 
 input int      MagicNumber       = 20251101;
 
@@ -64,27 +69,100 @@ double GetSpreadPips(){
    return PointsToPips(spreadPoints);
 }
 
+string TrimString(string text){
+   return StringTrimRight(StringTrimLeft(text));
+}
+
+bool ParseTimeToMinutes(string text, int &minutes){
+   text = TrimString(text);
+   int sep = StringFind(text, ":");
+   if(sep<=0) return false;
+   string hStr = StringSubstr(text, 0, sep);
+   string mStr = StringSubstr(text, sep+1);
+   int h = (int)StrToInteger(hStr);
+   int m = (int)StrToInteger(mStr);
+   if(h<0 || h>23 || m<0 || m>59) return false;
+   minutes = h*60 + m;
+   return true;
+}
+
+bool IsWithinManualSessions(){
+   if(!UseManualSessionFilter) return true;
+   string ranges = ManualSessionRanges;
+   if(StringLen(ranges)==0) return true;
+
+   datetime now = TimeCurrent();
+   int curMinutes = TimeHour(now)*60 + TimeMinute(now);
+
+   string entries[];
+   ushort delim = ';';
+   int count = StringSplit(ranges, delim, entries);
+   if(count<=0){
+      return true;
+   }
+
+   for(int i=0; i<count; i++){
+      string token = TrimString(entries[i]);
+      if(StringLen(token)==0) continue;
+      int dash = StringFind(token, "-");
+      if(dash<=0) continue;
+      string startStr = StringSubstr(token, 0, dash);
+      string endStr   = StringSubstr(token, dash+1);
+      int startMin=0, endMin=0;
+      if(!ParseTimeToMinutes(startStr, startMin) || !ParseTimeToMinutes(endStr, endMin)) continue;
+      if(endMin < startMin){
+         if(curMinutes>=startMin || curMinutes<=endMin) return true;
+      }else{
+         if(curMinutes>=startMin && curMinutes<=endMin) return true;
+      }
+   }
+   return false;
+}
+
 bool IsTradingSession(){
-   if(UseTokyo==false && UseEurope==false && UseNY==false) return true; // 全OFFなら制限なし
+   if(!IsWithinManualSessions()){
+      if(DebugMode) Print("DBG: manual session filter off");
+      return false;
+   }
+   if(!UseTokyo && !UseEurope && !UseNY) return true; // 全OFFなら無制限
    // ブローカー時刻（サーバー時刻）基準のざっくりセッション
    // 実ブローカーTZ差は運用時に調整してください
    int hour = TimeHour(TimeCurrent());
    bool tokyo  = (hour>=1  && hour<10);  // 01:00-09:59
    bool europe = (hour>=9  && hour<18);  // 09:00-17:59
    bool ny     = (hour>=14 && hour<=23); // 14:00-23:59
-   if( (UseTokyo && tokyo) || (UseEurope && europe) || (UseNY && ny) ) return true;
+   bool allowed = (UseTokyo && tokyo) || (UseEurope && europe) || (UseNY && ny);
+   if(!allowed && DebugMode) Print("DBG: session off");
+   return allowed;
+}
+
+bool CooldownPassed(int &remainSeconds){
+   datetime t = lastEntryTime;
+   if(t==0){
+      if(gvLastEntryKey=="") gvLastEntryKey = StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
+      if(GlobalVariableCheck(gvLastEntryKey)){
+         t = (datetime)GlobalVariableGet(gvLastEntryKey);
+         lastEntryTime = t;
+      }
+   }
+   if(t==0){
+      remainSeconds = 0;
+      return true;
+   }
+   int elapsed = (int)(TimeCurrent() - t);
+   int cooldown = CooldownMinutes * 60;
+   if(elapsed >= cooldown){
+      remainSeconds = 0;
+      return true;
+   }
+   remainSeconds = cooldown - elapsed;
+   if(remainSeconds < 0) remainSeconds = 0;
    return false;
 }
 
 bool CooldownPassed(){
-   datetime t = lastEntryTime;
-   if(t==0){
-      // グローバル変数から復元（EA再起動対策）
-      if(gvLastEntryKey=="") gvLastEntryKey = StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
-      if(GlobalVariableCheck(gvLastEntryKey)) t = (datetime)GlobalVariableGet(gvLastEntryKey);
-   }
-   if(t==0) return true;
-   return (TimeCurrent() - t) >= CooldownMinutes * 60;
+   int remain=0;
+   return CooldownPassed(remain);
 }
 
 int TradesTodayCount(){
@@ -226,6 +304,10 @@ bool PlaceOrder(int direction, double slPips, double tpPips){
       if(tpPts>0) tp = price - tpPts*Point;
    }
 
+   price = NormalizeDouble(price, Digits);
+   if(sl>0) sl = NormalizeDouble(sl, Digits);
+   if(tp>0) tp = NormalizeDouble(tp, Digits);
+
    double lots = (LotMode==FixedLot)? FixedLots : CalcLotsByRisk(slPips);
    int ticket = OrderSend(Symbol(), direction, lots, price, SlippagePoints, sl, tp, "MA-RSI", MagicNumber, 0, clrDodgerBlue);
    if(ticket<0){
@@ -240,22 +322,40 @@ bool PlaceOrder(int direction, double slPips, double tpPips){
 }
 
 void TryEntry(){
-   if(HasOpenPosition()) return;
+   if(HasOpenPosition()){
+      if(DebugMode) Print("DBG: existing position open");
+      return;
+   }
    if(!IsTradingSession()) return;
-   if(!CooldownPassed()){ Print("Cooldown not passed"); return; }
 
-   // リスク制御
-   if(TradesTodayCount() >= MaxTradesPerDay){ Print("Daily trade cap reached"); return; }
-   if(ConsecutiveLosses() >= MaxConsecLoss){ Print("Consecutive loss cap reached"); return; }
+   int cooldownRemain=0;
+   if(!CooldownPassed(cooldownRemain)){
+      if(DebugMode) Print("DBG: cooldown (remain=", cooldownRemain, "s)");
+      return;
+   }
 
-   // スプレッド
+   int tradesToday = TradesTodayCount();
+   if(tradesToday >= MaxTradesPerDay){
+      if(DebugMode) Print("DBG: day-cap reached (", tradesToday, "/", MaxTradesPerDay, ")");
+      return;
+   }
+
+   int consecLoss = ConsecutiveLosses();
+   if(consecLoss >= MaxConsecLoss){
+      if(DebugMode) Print("DBG: consec-loss cap reached (", consecLoss, "/", MaxConsecLoss, ")");
+      return;
+   }
+
    double spread = GetSpreadPips();
-   if(spread > MaxSpreadPips){ Print("Spread too wide: ", DoubleToString(spread,1), " pips"); return; }
+   if(spread > MaxSpreadPips){
+      if(DebugMode)
+         Print("DBG: blocked by spread=", DoubleToString(spread,1), "p > max=", DoubleToString(MaxSpreadPips,1), "p");
+      return;
+   }
 
-   // インジ計算
    int tf = InpTimeframe;
-   // Close[0]は未確定、エントリー判定は確定足ベース
-   int shiftNow=0, shiftPrev=1;
+   int shiftNow = 1;  // 確定足
+   int shiftPrev = 2;
 
    double fastNow  = iMA(Symbol(), tf, FastEMA, 0, MODE_EMA, PRICE_CLOSE, shiftNow);
    double slowNow  = iMA(Symbol(), tf, SlowEMA, 0, MODE_EMA, PRICE_CLOSE, shiftNow);
@@ -264,18 +364,27 @@ void TryEntry(){
 
    double rsiNow   = iRSI(Symbol(), tf, RSIPeriod, PRICE_CLOSE, shiftNow);
 
-   // ATR-based SL/TP（必要なら）
+   bool needATR = (MinATR_Pips > 0.0) || (SLTP_CalcMode==UseATR);
+   double atrPoints = 0.0;
+   double atrPips = 0.0;
+   if(needATR){
+      atrPoints = iATR(Symbol(), tf, ATRPeriod, shiftNow) / Point;
+      atrPips = PointsToPips(atrPoints);
+   }
+
+   if(MinATR_Pips > 0.0 && atrPips < MinATR_Pips){
+      if(DebugMode)
+         Print("DBG: blocked by low ATR=", DoubleToString(atrPips,1), "p < min=", DoubleToString(MinATR_Pips,1), "p");
+      return;
+   }
+
    double SLp=SL_FixedPips, TPp=TP_FixedPips;
    if(SLTP_CalcMode==UseATR){
-      double atr = iATR(Symbol(), tf, ATRPeriod, shiftNow) / Point; // ATR（ポイント）
-      double atrPips = PointsToPips(atr);
       SLp = atrPips * SL_ATR_Mult;
       TPp = atrPips * TP_ATR_Mult;
    }
 
-   // 条件：ロング
    bool longCond  = (Close[shiftNow] > slowNow) && CrossUp(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow > RSIThreshMid);
-   // 条件：ショート
    bool shortCond = (Close[shiftNow] < slowNow) && CrossDown(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow < RSIThreshMid);
 
    if(longCond){
