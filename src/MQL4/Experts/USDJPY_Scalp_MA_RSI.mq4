@@ -27,7 +27,7 @@ input bool     UseTrailing       = true;
 input double   TrailStartPips    = 5.0;
 input double   TrailStepPips     = 1.0;
 
-input double   MaxSpreadPips     = 2.0;      // USDJPY: 約0.2銭（1pip=0.01円）
+input double   MaxSpreadPips     = 1.5;      // USDJPY: 約0.2銭（1pip=0.01円） ※ユーザー要望により緩和(0.4->1.5)
 input int      SlippagePoints    = 3;
 input int      CooldownMinutes   = 5;
 input int      MaxTradesPerDay   = 20;
@@ -128,7 +128,9 @@ bool IsTradingSession(){
    // ブローカー時刻（サーバー時刻）基準のざっくりセッション
    // 実ブローカーTZ差は運用時に調整してください
    int hour = TimeHour(TimeCurrent());
-   bool tokyo  = (hour>=1  && hour<10);  // 01:00-09:59
+   // Tokyo: 日本時間9:00はサーバー時間(冬+7/夏+6)で 冬2:00/夏3:00
+   // ここでは冬時間基準で 02:00 から許可するように変更
+   bool tokyo  = (hour>=2  && hour<10);  // 02:00-09:59 (JST 09:00-16:59 Winter)
    bool europe = (hour>=9  && hour<18);  // 09:00-17:59
    bool ny     = (hour>=14 && hour<=23); // 14:00-23:59
    bool allowed = (UseTokyo && tokyo) || (UseEurope && europe) || (UseNY && ny);
@@ -354,6 +356,7 @@ void TryEntry(){
    }
 
    int tf = InpTimeframe;
+   // リペイント防止のため、確定足(1本前)とさらに1本前(2本前)でクロス判定を行う
    int shiftNow = 1;  // 確定足
    int shiftPrev = 2;
 
