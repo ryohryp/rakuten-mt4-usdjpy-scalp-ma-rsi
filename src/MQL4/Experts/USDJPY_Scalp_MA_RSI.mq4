@@ -8,7 +8,9 @@ input int    InpTimeframe        = PERIOD_M5;
 input int    FastEMA             = 5;
 input int    SlowEMA             = 20;
 input int    RSIPeriod           = 14;
-input double RSIThreshMid        = 50.0;
+// input double RSIThreshMid        = 50.0; // ←これは削除かコメントアウト
+input int    RSI_Level_Buy       = 55;
+input int    RSI_Level_Sell      = 45;
 
 enum RiskMode { FixedLot=0, RiskPercent=1 };
 input RiskMode LotMode           = RiskPercent;
@@ -20,14 +22,19 @@ input SLTPMode SLTP_CalcMode     = UseFixed;
 input double   SL_FixedPips      = 6.0;      // 固定SL
 input double   TP_FixedPips      = 9.0;      // 固定TP
 input int      ATRPeriod         = 14;
-input double   SL_ATR_Mult       = 1.0;      // ATR基準
+input double   SL_ATR_Mult       = 1.0;
 input double   TP_ATR_Mult       = 1.5;
 
 input bool     UseTrailing       = true;
 input double   TrailStartPips    = 5.0;
 input double   TrailStepPips     = 1.0;
 
-input double   MaxSpreadPips     = 1.5;      // USDJPY: 約0.2銭（1pip=0.01円） ※ユーザー要望により緩和(0.4->1.5)
+// --- 既存のinputの下に追加 ---
+input bool   UseBreakEven      = true;
+input double BE_Trigger_Mult   = 0.5;
+input double BE_Offset_Pips    = 0.5;
+
+input double   MaxSpreadPips     = 1.5;
 input int      SlippagePoints    = 3;
 input int      CooldownMinutes   = 5;
 input int      MaxTradesPerDay   = 20;
@@ -44,7 +51,13 @@ input double   MinATR_Pips       = 0.0;      // 0で無効。低ボラ回避時�
 
 input int      MagicNumber       = 20251101;
 
-// ----- 内部状態管理 -----
+input int    ADXPeriod         = 14;
+input int    ADXThreshold      = 20;
+
+input bool   UseMTF_Filter     = true;
+input int    MTF_Timeframe     = 60;
+input int    MTF_MA_Period     = 20;
+
 datetime lastEntryTime = 0;
 string   gvLastEntryKey;
 
@@ -163,8 +176,20 @@ bool CooldownPassed(int &remainSeconds){
 }
 
 bool CooldownPassed(){
-   int remain=0;
-   return CooldownPassed(remain);
+   datetime t = lastEntryTime;
+   if(t==0){
+      // グローバル変数から復元
+      if(gvLastEntryKey=="") gvLastEntryKey = StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
+      if(GlobalVariableCheck(gvLastEntryKey)) t = (datetime)GlobalVariableGet(gvLastEntryKey);
+   }
+   if(t==0) return true;
+
+   // 【追加】もし記録されている時間が「現在より未来（バックテスト再開時など）」なら無視する
+   if(t > TimeCurrent()){
+       return true;
+   }
+
+   return (TimeCurrent() - t) >= CooldownMinutes * 60;
 }
 
 int TradesTodayCount(){
@@ -188,10 +213,16 @@ int TradesTodayCount(){
 
 int ConsecutiveLosses(){
    int consec=0;
+   datetime dayStart = iTime(Symbol(), PERIOD_D1, 0); // 今日の開始時間
+
    for(int i=OrdersHistoryTotal()-1; i>=0; i--){
       if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)==false) continue;
       if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
-      if(OrderType()>OP_SELL) continue; // 0/1以外は除外
+      if(OrderType()>OP_SELL) continue;
+      
+      // 【追加】もし履歴の日付が「今日より前」なら、そこでカウント終了（昨日の負けはノーカウント）
+      if(OrderCloseTime() < dayStart) break;
+
       double profit = OrderProfit()+OrderSwap()+OrderCommission();
       if(profit<0){
          consec++;
@@ -291,6 +322,56 @@ void UpdateTrailingStops(){
    }
 }
 
+void UpdateBreakEven(){
+   if(!UseBreakEven) return;
+
+   for(int i=0; i<OrdersTotal(); i++){
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES)==false) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      
+      int type = OrderType();
+      double openPrice = OrderOpenPrice();
+      double currentSL = OrderStopLoss();
+      double takeProfit = OrderTakeProfit();
+
+      // TPが設定されていない場合はスキップ
+      if(takeProfit == 0) continue;
+
+      if(type == OP_BUY){
+         double targetDist = takeProfit - openPrice;
+         double currentDist = Bid - openPrice;
+         
+         // TPまでの距離の x% (例:50%) まで進んだら
+         if(currentDist >= targetDist * BE_Trigger_Mult){
+            // 新しいSL位置（建値 + オフセット）
+            double newSL = openPrice + PipToPoints(BE_Offset_Pips) * Point;
+            
+            // まだSLが建値より下にある場合のみ移動
+            if(newSL > currentSL && newSL < Bid){
+                if(!OrderModify(OrderTicket(), openPrice, newSL, takeProfit, 0, clrGreen)){
+                   Print("BreakEven modify failed. Err=", GetLastError());
+                }
+            }
+         }
+      }
+      else if(type == OP_SELL){
+         double targetDist = openPrice - takeProfit;
+         double currentDist = openPrice - Ask;
+         
+         if(currentDist >= targetDist * BE_Trigger_Mult){
+            double newSL = openPrice - PipToPoints(BE_Offset_Pips) * Point;
+            
+            // まだSLが建値より上にある場合のみ移動
+            if( (currentSL == 0 || newSL < currentSL) && newSL > Ask){
+                if(!OrderModify(OrderTicket(), openPrice, newSL, takeProfit, 0, clrGreen)){
+                   Print("BreakEven modify failed. Err=", GetLastError());
+                }
+            }
+         }
+      }
+   }
+}
+
 bool PlaceOrder(int direction, double slPips, double tpPips){
    double price = (direction==OP_BUY)? Ask : Bid;
    double slPts = PipToPoints(slPips);
@@ -324,83 +405,98 @@ bool PlaceOrder(int direction, double slPips, double tpPips){
 }
 
 void TryEntry(){
-   if(HasOpenPosition()){
-      if(DebugMode) Print("DBG: existing position open");
-      return;
-   }
+   if(HasOpenPosition()) return;
    if(!IsTradingSession()) return;
+   if(!CooldownPassed()){ Print("Cooldown not passed"); return; }
 
-   int cooldownRemain=0;
-   if(!CooldownPassed(cooldownRemain)){
-      if(DebugMode) Print("DBG: cooldown (remain=", cooldownRemain, "s)");
-      return;
+   // リスク制御
+   if(TradesTodayCount() >= MaxTradesPerDay){ 
+       // ログ省略（必要ならstatic変数で制御）
+       return; 
    }
 
-   int tradesToday = TradesTodayCount();
-   if(tradesToday >= MaxTradesPerDay){
-      if(DebugMode) Print("DBG: day-cap reached (", tradesToday, "/", MaxTradesPerDay, ")");
-      return;
+   int consec = ConsecutiveLosses();
+   if(consec >= MaxConsecLoss){ 
+       // 【修正】足が変わったタイミングでのみ1回だけログを出す
+       static datetime lastLogBar = 0;
+       if(lastLogBar != Time[0]){
+           Print("Consecutive loss cap reached (Today: ", consec, ")");
+           lastLogBar = Time[0];
+       }
+       return; 
    }
 
-   int consecLoss = ConsecutiveLosses();
-   if(consecLoss >= MaxConsecLoss){
-      if(DebugMode) Print("DBG: consec-loss cap reached (", consecLoss, "/", MaxConsecLoss, ")");
-      return;
-   }
-
+   // スプレッドチェック
    double spread = GetSpreadPips();
-   if(spread > MaxSpreadPips){
-      if(DebugMode)
-         Print("DBG: blocked by spread=", DoubleToString(spread,1), "p > max=", DoubleToString(MaxSpreadPips,1), "p");
-      return;
-   }
+   if(spread > MaxSpreadPips){ Print("Spread too wide: ", DoubleToString(spread,1), " pips"); return; }
 
+   // インジ計算
    int tf = InpTimeframe;
-   // リペイント防止のため、確定足(1本前)とさらに1本前(2本前)でクロス判定を行う
-   int shiftNow = 1;  // 確定足
-   int shiftPrev = 2;
+   
+   // 【変更】0(現在足)ではなく、1(確定足)と2(その前)を見ることでダマシを防ぐ
+   int shiftNow=1, shiftPrev=2; 
 
    double fastNow  = iMA(Symbol(), tf, FastEMA, 0, MODE_EMA, PRICE_CLOSE, shiftNow);
    double slowNow  = iMA(Symbol(), tf, SlowEMA, 0, MODE_EMA, PRICE_CLOSE, shiftNow);
    double fastPrev = iMA(Symbol(), tf, FastEMA, 0, MODE_EMA, PRICE_CLOSE, shiftPrev);
    double slowPrev = iMA(Symbol(), tf, SlowEMA, 0, MODE_EMA, PRICE_CLOSE, shiftPrev);
-
    double rsiNow   = iRSI(Symbol(), tf, RSIPeriod, PRICE_CLOSE, shiftNow);
+   
+   // 【追加】ADXによるトレンド強度フィルタ
+   double adx = iADX(Symbol(), tf, ADXPeriod, PRICE_CLOSE, MODE_MAIN, shiftNow);
+   if(adx < ADXThreshold) return; // トレンドが弱い場合は見送り
 
-   bool needATR = (MinATR_Pips > 0.0) || (SLTP_CalcMode==UseATR);
-   double atrPoints = 0.0;
-   double atrPips = 0.0;
-   if(needATR){
-      atrPoints = iATR(Symbol(), tf, ATRPeriod, shiftNow) / Point;
-      atrPips = PointsToPips(atrPoints);
-   }
-
-   if(MinATR_Pips > 0.0 && atrPips < MinATR_Pips){
-      if(DebugMode)
-         Print("DBG: blocked by low ATR=", DoubleToString(atrPips,1), "p < min=", DoubleToString(MinATR_Pips,1), "p");
-      return;
-   }
-
+   // ATR-based SL/TP
    double SLp=SL_FixedPips, TPp=TP_FixedPips;
    if(SLTP_CalcMode==UseATR){
+      double atr = iATR(Symbol(), tf, ATRPeriod, shiftNow) / Point; 
+      double atrPips = PointsToPips(atr);
       SLp = atrPips * SL_ATR_Mult;
       TPp = atrPips * TP_ATR_Mult;
    }
 
-   bool longCond  = (Close[shiftNow] > slowNow) && CrossUp(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow > RSIThreshMid);
-   bool shortCond = (Close[shiftNow] < slowNow) && CrossDown(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow < RSIThreshMid);
+   // 条件判定（RSI判定を新しい変数に差し替え）
+   bool longCond  = (Close[shiftNow] > slowNow) && CrossUp(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow > RSI_Level_Buy);
+   bool shortCond = (Close[shiftNow] < slowNow) && CrossDown(fastPrev, slowPrev, fastNow, slowNow) && (rsiNow < RSI_Level_Sell);
+
+   // ============================================================
+   // 【追加】上位足(MTF)トレンドフィルター
+   // ============================================================
+   if(UseMTF_Filter){
+       // 上位足のMA（現在の足と1つ前の足）を取得
+       double mtfMaNow  = iMA(Symbol(), MTF_Timeframe, MTF_MA_Period, 0, MODE_EMA, PRICE_CLOSE, 1);
+       double mtfMaPrev = iMA(Symbol(), MTF_Timeframe, MTF_MA_Period, 0, MODE_EMA, PRICE_CLOSE, 2);
+
+       // 上位足MAが上向きか下向きか判定
+       bool isUptrend   = (mtfMaNow > mtfMaPrev);
+       bool isDowntrend = (mtfMaNow < mtfMaPrev);
+       
+       // フィルタ適用（価格がMAより上/下にあるかも条件に加えるとより強力ですが、まずは傾きだけで判定）
+       // 上位足が上向きでなければ、ロングを禁止（ショート専用にするわけではないがロング条件を潰す）
+       if(!isUptrend)   longCond = false; 
+       
+       // 上位足が下向きでなければ、ショートを禁止
+       if(!isDowntrend) shortCond = false;
+   }
+   // ============================================================
 
    if(longCond){
       if(PlaceOrder(OP_BUY, SLp, TPp))
-         Print("BUY placed. SL=", DoubleToString(SLp,1), " TP=", DoubleToString(TPp,1));
+         Print("BUY placed. SL=", DoubleToString(SLp,1), " TP=", DoubleToString(TPp,1), " ADX=", DoubleToString(adx,1));
    }else if(shortCond){
       if(PlaceOrder(OP_SELL, SLp, TPp))
-         Print("SELL placed. SL=", DoubleToString(SLp,1), " TP=", DoubleToString(TPp,1));
+         Print("SELL placed. SL=", DoubleToString(SLp,1), " TP=", DoubleToString(TPp,1), " ADX=", DoubleToString(adx,1));
    }
 }
 
 int OnInit(){
    gvLastEntryKey = StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
+
+   // 【追加】バックテスト時は、過去の残留データを削除してクリーンな状態で始める
+   if(IsTesting()){
+      if(GlobalVariableCheck(gvLastEntryKey)) GlobalVariableDel(gvLastEntryKey);
+   }
+
    return(INIT_SUCCEEDED);
 }
 
@@ -410,8 +506,12 @@ int OnDeinit(){
 }
 
 void OnTick(){
-   // トレーリング
+   // トレーリング（以前からあるもの）
    UpdateTrailingStops();
+   
+   // 【追加】ブレイクイーブン監視
+   UpdateBreakEven();
+
    // エントリー判定
    TryEntry();
 }
