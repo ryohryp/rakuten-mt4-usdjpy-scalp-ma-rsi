@@ -14,13 +14,12 @@ input int    RSI_Level_Sell      = 45;
 
 enum RiskMode { FixedLot=0, RiskPercent=1 };
 input RiskMode LotMode           = RiskPercent;
-input double   FixedLots         = 0.10;     // 固定ロット時
-input double   RiskPercentPerTrade = 1.0;    // リスク％（例：1%）
-
+input double   FixedLots         = 0.10;
+input double   RiskPercentPerTrade = 1.0; 
 enum SLTPMode { UseFixed=0, UseATR=1 };
 input SLTPMode SLTP_CalcMode     = UseFixed;
-input double   SL_FixedPips      = 6.0;      // 固定SL
-input double   TP_FixedPips      = 9.0;      // 固定TP
+input double   SL_FixedPips      = 6.0; 
+input double   TP_FixedPips      = 9.0;
 input int      ATRPeriod         = 14;
 input double   SL_ATR_Mult       = 1.0;
 input double   TP_ATR_Mult       = 1.5;
