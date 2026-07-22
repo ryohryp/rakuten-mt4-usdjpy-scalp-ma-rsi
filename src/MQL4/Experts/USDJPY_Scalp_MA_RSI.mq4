@@ -1,857 +1,456 @@
 //+------------------------------------------------------------------+
-//|  USDJPY_Scalp_MA_RSI.mq4                                         |
-//|  Logic A: 5EMA/20EMA + RSI filter (Rakuten MT4 tuned)            |
+//| USDJPY_Scalp_MA_RSI.mq4                                         |
+//| Logic A: 5EMA/20EMA + RSI filter (Rakuten MT4 tuned)            |
 //+------------------------------------------------------------------+
 #property strict
 
-input int    InpTimeframe          = PERIOD_M5;
-input int    FastEMA               = 5;
-input int    SlowEMA               = 20;
-input int    RSIPeriod             = 14;
-input int    RSI_Level_Buy         = 55;
-input int    RSI_Level_Sell        = 45;
+input int InpTimeframe=PERIOD_M5;
+input int FastEMA=5;
+input int SlowEMA=20;
+input int RSIPeriod=14;
+input int RSI_Level_Buy=55;
+input int RSI_Level_Sell=45;
 
 enum RiskMode { FixedLot=0, RiskPercent=1 };
-input RiskMode LotMode             = RiskPercent;
-input double   FixedLots           = 0.10;
-input double   RiskPercentPerTrade = 1.0;
+input RiskMode LotMode=RiskPercent;
+input double FixedLots=0.10;
+input double RiskPercentPerTrade=0.25;
 
 enum SLTPMode { UseFixed=0, UseATR=1 };
-input SLTPMode SLTP_CalcMode       = UseFixed;
-input double   SL_FixedPips        = 6.0;
-input double   TP_FixedPips        = 9.0;
-input int      ATRPeriod           = 14;
-input double   SL_ATR_Mult         = 1.0;
-input double   TP_ATR_Mult         = 1.5;
+input SLTPMode SLTP_CalcMode=UseATR;
+input double SL_FixedPips=6.0;
+input double TP_FixedPips=9.0;
+input int ATRPeriod=14;
+input double SL_ATR_Mult=1.0;
+input double TP_ATR_Mult=1.5;
 
-input bool     UseTrailing         = true;
-input double   TrailStartPips      = 5.0;
-input double   TrailStepPips       = 1.0;
+input bool UseTrailing=false;
+input double TrailStartR=1.2;
+input double TrailDistanceR=0.8;
+input double TrailStepPips=0.5;
+input bool UseBreakEven=false;
+input double BE_Trigger_R=1.0;
+input double BE_Offset_Pips=0.2;
 
-input bool     UseBreakEven        = true;
-input double   BE_Trigger_Mult     = 0.5;
-input double   BE_Offset_Pips      = 0.5;
+input double MaxSpreadPips=0.8;
+input double MaxSpreadATRRatio=0.20;
+input int SlippagePoints=3;
+input int CooldownMinutes=5;
+input int MaxTradesPerDay=8;
+input int MaxConsecLoss=3;
+input double MaxDailyLossPercent=0.50;
 
-input double   MaxSpreadPips       = 1.5;
-input int      SlippagePoints      = 3;
-input int      CooldownMinutes     = 5;
-input int      MaxTradesPerDay     = 20;
-input int      MaxConsecLoss       = 3;
+// Broker-server time. Adjust when the broker's DST offset changes.
+input bool UseTokyo=false;
+input bool UseEurope=false;
+input bool UseNY=true;
+input int TokyoStartHour=2;
+input int TokyoEndHour=10;
+input int EuropeStartHour=9;
+input int EuropeEndHour=18;
+input int NYStartHour=14;
+input int NYEndHour=0;
+input bool UseManualSessionFilter=false;
+input string ManualSessionRanges="";
 
-input bool     UseTokyo            = false;
-input bool     UseEurope           = false;
-input bool     UseNY               = false;
-input bool     UseManualSessionFilter = false;
-input string   ManualSessionRanges = "";
+input bool DebugMode=true;
+input double MinATR_Pips=3.0;
+input int MagicNumber=20251101;
+input int ADXPeriod=14;
+input double ADXThreshold=20.0;
+input bool UseMTF_Filter=true;
+input int MTF_Timeframe=PERIOD_H1;
+input int MTF_MA_Period=20;
 
-input bool     DebugMode           = true;
-input double   MinATR_Pips         = 0.0;
+datetime lastEntryTime=0;
+datetime lastSignalBar=0;
+string gvLastEntryKey="";
 
-input int      MagicNumber         = 20251101;
-
-input int      ADXPeriod           = 14;
-input int      ADXThreshold        = 20;
-
-input bool     UseMTF_Filter       = true;
-input int      MTF_Timeframe       = 60;
-input int      MTF_MA_Period       = 20;
-
-datetime lastEntryTime = 0;
-datetime lastSignalBar = 0;
-string   gvLastEntryKey;
-
-//+------------------------------------------------------------------+
-// pips/points conversion for JPY pairs.
-// 1 pip for USDJPY is 0.01 yen.
-//+------------------------------------------------------------------+
-double PipToPoints(double pips){
-   double pipSize = 0.01;
-   double pointsPerPip = pipSize / Point;
-   return pips * pointsPerPip;
-}
-
+//--- price helpers
+double PipSize(){ return 0.01; }
+double PipToPoints(double pips){ return Point>0 ? pips*PipSize()/Point : 0.0; }
 double PointsToPips(double points){
-   double pipSize = 0.01;
-   double pointsPerPip = pipSize / Point;
-   return points / pointsPerPip;
+   double ppp=PipSize()/Point;
+   return ppp>0 ? points/ppp : 0.0;
+}
+double PriceToPips(double distance){ return MathAbs(distance)/PipSize(); }
+double SpreadPips(){ return PointsToPips(MarketInfo(Symbol(),MODE_SPREAD)); }
+double SignedProfitPips(int type,double openPrice){
+   if(type==OP_BUY) return (Bid-openPrice)/PipSize();
+   if(type==OP_SELL) return (openPrice-Ask)/PipSize();
+   return 0.0;
 }
 
-double GetSpreadPips(){
-   double spreadPoints = (double)MarketInfo(Symbol(), MODE_SPREAD);
-   return PointsToPips(spreadPoints);
-}
-
-string TrimString(string text){
-   return StringTrimRight(StringTrimLeft(text));
-}
-
-bool ParseTimeToMinutes(string text, int &minutes){
-   text = TrimString(text);
-   int sep = StringFind(text, ":");
-   if(sep <= 0) return false;
-
-   string hStr = StringSubstr(text, 0, sep);
-   string mStr = StringSubstr(text, sep + 1);
-   int h = (int)StrToInteger(hStr);
-   int m = (int)StrToInteger(mStr);
-
-   if(h < 0 || h > 23 || m < 0 || m > 59) return false;
-
-   minutes = h * 60 + m;
+//--- session helpers
+string Trim(string value){ return StringTrimRight(StringTrimLeft(value)); }
+bool ParseMinutes(string value,int &minutes){
+   value=Trim(value);
+   int pos=StringFind(value,":");
+   if(pos<=0) return false;
+   int hour=(int)StrToInteger(StringSubstr(value,0,pos));
+   int minute=(int)StrToInteger(StringSubstr(value,pos+1));
+   if(hour<0 || hour>23 || minute<0 || minute>59) return false;
+   minutes=hour*60+minute;
    return true;
 }
-
-bool IsWithinManualSessions(){
-   if(!UseManualSessionFilter) return true;
-
-   string ranges = ManualSessionRanges;
-   if(StringLen(ranges) == 0) return true;
-
-   datetime now = TimeCurrent();
-   int curMinutes = TimeHour(now) * 60 + TimeMinute(now);
-
+bool InRange(int current,int startValue,int endValue){
+   if(startValue==endValue) return false;
+   if(endValue<startValue) return current>=startValue || current<endValue;
+   return current>=startValue && current<endValue;
+}
+bool InManualSession(){
+   string ranges=Trim(ManualSessionRanges);
+   if(StringLen(ranges)==0) return false;
    string entries[];
-   ushort delim = ';';
-   int count = StringSplit(ranges, delim, entries);
-   if(count <= 0) return true;
-
-   for(int i = 0; i < count; i++){
-      string token = TrimString(entries[i]);
-      if(StringLen(token) == 0) continue;
-
-      int dash = StringFind(token, "-");
-      if(dash <= 0) continue;
-
-      string startStr = StringSubstr(token, 0, dash);
-      string endStr   = StringSubstr(token, dash + 1);
-      int startMin = 0;
-      int endMin = 0;
-
-      if(!ParseTimeToMinutes(startStr, startMin) ||
-         !ParseTimeToMinutes(endStr, endMin)){
-         continue;
-      }
-
-      if(endMin < startMin){
-         if(curMinutes >= startMin || curMinutes <= endMin) return true;
-      }else{
-         if(curMinutes >= startMin && curMinutes <= endMin) return true;
-      }
+   int count=StringSplit(ranges,(ushort)';',entries);
+   int now=TimeHour(TimeCurrent())*60+TimeMinute(TimeCurrent());
+   bool valid=false;
+   for(int i=0;i<count;i++){
+      string token=Trim(entries[i]);
+      int dash=StringFind(token,"-");
+      if(dash<=0) continue;
+      int startMinute=0,endMinute=0;
+      if(!ParseMinutes(StringSubstr(token,0,dash),startMinute) ||
+         !ParseMinutes(StringSubstr(token,dash+1),endMinute)) continue;
+      valid=true;
+      if(InRange(now,startMinute,endMinute)) return true;
    }
-
+   if(!valid && DebugMode) Print("DBG: invalid ManualSessionRanges=",ManualSessionRanges);
    return false;
 }
-
-bool IsTradingSession(){
-   if(!IsWithinManualSessions()){
-      if(DebugMode) Print("DBG: manual session filter off");
-      return false;
-   }
-
-   if(!UseTokyo && !UseEurope && !UseNY) return true;
-
-   int hour = TimeHour(TimeCurrent());
-   bool tokyo  = (hour >= 2  && hour < 10);
-   bool europe = (hour >= 9  && hour < 18);
-   bool ny     = (hour >= 14 && hour <= 23);
-
-   bool allowed =
-      (UseTokyo && tokyo) ||
-      (UseEurope && europe) ||
-      (UseNY && ny);
-
-   if(!allowed && DebugMode) Print("DBG: session off");
-   return allowed;
+bool TradingSession(){
+   if(UseManualSessionFilter) return InManualSession();
+   if(!UseTokyo && !UseEurope && !UseNY) return false;
+   int now=TimeHour(TimeCurrent())*60;
+   return (UseTokyo && InRange(now,TokyoStartHour*60,TokyoEndHour*60)) ||
+          (UseEurope && InRange(now,EuropeStartHour*60,EuropeEndHour*60)) ||
+          (UseNY && InRange(now,NYStartHour*60,NYEndHour*60));
 }
 
-bool CooldownPassed(int &remainSeconds){
-   datetime t = lastEntryTime;
-
-   if(t == 0){
-      if(gvLastEntryKey == ""){
-         gvLastEntryKey =
-            StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
-      }
-
-      if(GlobalVariableCheck(gvLastEntryKey)){
-         t = (datetime)GlobalVariableGet(gvLastEntryKey);
-         lastEntryTime = t;
-      }
-   }
-
-   if(t == 0 || t > TimeCurrent()){
-      remainSeconds = 0;
-      return true;
-   }
-
-   int elapsed = (int)(TimeCurrent() - t);
-   int cooldown = CooldownMinutes * 60;
-
-   if(elapsed >= cooldown){
-      remainSeconds = 0;
-      return true;
-   }
-
-   remainSeconds = cooldown - elapsed;
-   if(remainSeconds < 0) remainSeconds = 0;
-   return false;
-}
-
+//--- daily limits
+datetime TodayStart(){ return StrToTime(TimeToString(TimeCurrent(),TIME_DATE)); }
 bool CooldownPassed(){
-   int remainSeconds = 0;
-   return CooldownPassed(remainSeconds);
+   datetime value=lastEntryTime;
+   if(value==0 && GlobalVariableCheck(gvLastEntryKey)){
+      value=(datetime)GlobalVariableGet(gvLastEntryKey);
+      lastEntryTime=value;
+   }
+   if(value==0 || value>TimeCurrent()) return true;
+   return TimeCurrent()-value>=CooldownMinutes*60;
 }
-
-int TradesTodayCount(){
-   int count = 0;
-   datetime dayStart =
-      StrToTime(TimeToString(TimeCurrent(), TIME_DATE));
-
-   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--){
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-      if(OrderSymbol() != Symbol() ||
-         OrderMagicNumber() != MagicNumber) continue;
-      if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
-      if(OrderOpenTime() >= dayStart) count++;
+int TradesToday(){
+   int count=0;
+   datetime start=TodayStart();
+   for(int i=OrdersHistoryTotal()-1;i>=0;i--){
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_HISTORY)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      if(OrderType()!=OP_BUY && OrderType()!=OP_SELL) continue;
+      if(OrderOpenTime()>=start) count++;
    }
-
-   for(int j = 0; j < OrdersTotal(); j++){
-      if(!OrderSelect(j, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(OrderSymbol() != Symbol() ||
-         OrderMagicNumber() != MagicNumber) continue;
-      if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
-      if(OrderOpenTime() >= dayStart) count++;
+   for(int j=0;j<OrdersTotal();j++){
+      if(!OrderSelect(j,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      if(OrderType()!=OP_BUY && OrderType()!=OP_SELL) continue;
+      if(OrderOpenTime()>=start) count++;
    }
-
    return count;
 }
-
-// Count only the most recent consecutive losses closed today.
-// Explicit close-time ordering avoids relying on history display order.
+double ClosedNetToday(){
+   double total=0.0;
+   datetime start=TodayStart();
+   for(int i=OrdersHistoryTotal()-1;i>=0;i--){
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_HISTORY)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      if(OrderType()!=OP_BUY && OrderType()!=OP_SELL) continue;
+      if(OrderCloseTime()<start) continue;
+      total+=OrderProfit()+OrderSwap()+OrderCommission();
+   }
+   return total;
+}
+bool DailyLossReached(){
+   if(MaxDailyLossPercent<=0) return false;
+   double pnl=ClosedNetToday();
+   double startBalance=AccountBalance()-pnl;
+   if(startBalance<=0) startBalance=AccountBalance();
+   double limit=startBalance*MaxDailyLossPercent/100.0;
+   if(limit>0 && pnl<=-limit){
+      Print("Daily loss cap reached. P/L=",DoubleToString(pnl,2),
+            " limit=",DoubleToString(-limit,2));
+      return true;
+   }
+   return false;
+}
 int ConsecutiveLossesToday(){
-   int consec = 0;
-   datetime dayStart =
-      StrToTime(TimeToString(TimeCurrent(), TIME_DATE));
-
-   datetime beforeCloseTime = TimeCurrent() + 1;
-   int beforeTicket = 2147483647;
-
+   int losses=0;
+   datetime dayStart=TodayStart();
+   datetime beforeTime=TimeCurrent()+1;
+   int beforeTicket=2147483647;
    while(true){
-      bool found = false;
-      datetime latestCloseTime = 0;
-      int latestTicket = -1;
-      double latestProfit = 0.0;
-
-      for(int i = OrdersHistoryTotal() - 1; i >= 0; i--){
-         if(!OrderSelect(i, SELECT_BY_POS, MODE_HISTORY)) continue;
-         if(OrderSymbol() != Symbol() ||
-            OrderMagicNumber() != MagicNumber) continue;
-         if(OrderType() != OP_BUY && OrderType() != OP_SELL) continue;
-
-         datetime closeTime = OrderCloseTime();
-         int ticket = OrderTicket();
-
-         if(closeTime < dayStart) continue;
-         if(closeTime > beforeCloseTime) continue;
-         if(closeTime == beforeCloseTime && ticket >= beforeTicket) continue;
-
-         if(!found ||
-            closeTime > latestCloseTime ||
-            (closeTime == latestCloseTime && ticket > latestTicket)){
-            found = true;
-            latestCloseTime = closeTime;
-            latestTicket = ticket;
-            latestProfit =
-               OrderProfit() +
-               OrderSwap() +
-               OrderCommission();
+      bool found=false;
+      datetime latestTime=0;
+      int latestTicket=-1;
+      double latestProfit=0.0;
+      for(int i=OrdersHistoryTotal()-1;i>=0;i--){
+         if(!OrderSelect(i,SELECT_BY_POS,MODE_HISTORY)) continue;
+         if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+         if(OrderType()!=OP_BUY && OrderType()!=OP_SELL) continue;
+         datetime closeTime=OrderCloseTime();
+         int ticket=OrderTicket();
+         if(closeTime<dayStart || closeTime>beforeTime) continue;
+         if(closeTime==beforeTime && ticket>=beforeTicket) continue;
+         if(!found || closeTime>latestTime ||
+            (closeTime==latestTime && ticket>latestTicket)){
+            found=true;
+            latestTime=closeTime;
+            latestTicket=ticket;
+            latestProfit=OrderProfit()+OrderSwap()+OrderCommission();
          }
       }
-
       if(!found) break;
-
-      if(latestProfit < 0){
-         consec++;
-      }else if(latestProfit > 0){
-         break;
-      }
-
-      beforeCloseTime = latestCloseTime;
-      beforeTicket = latestTicket;
+      if(latestProfit<0) losses++;
+      else if(latestProfit>0) break;
+      beforeTime=latestTime;
+      beforeTicket=latestTicket;
    }
-
-   return consec;
+   return losses;
 }
-
-bool HasOpenPosition(){
-   for(int i = 0; i < OrdersTotal(); i++){
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-
-      if(OrderSymbol() == Symbol() &&
-         OrderMagicNumber() == MagicNumber &&
-         (OrderType() == OP_BUY || OrderType() == OP_SELL)){
-         return true;
-      }
+bool HasPosition(){
+   for(int i=0;i<OrdersTotal();i++){
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()==Symbol() && OrderMagicNumber()==MagicNumber &&
+         (OrderType()==OP_BUY || OrderType()==OP_SELL)) return true;
    }
-
    return false;
 }
 
+//--- lot sizing
 double PipValuePerLot(){
-   return MarketInfo(Symbol(), MODE_TICKVALUE) * PipToPoints(1.0);
+   double tickValue=MarketInfo(Symbol(),MODE_TICKVALUE);
+   double tickSizePoints=MarketInfo(Symbol(),MODE_TICKSIZE);
+   if(tickValue<=0 || tickSizePoints<=0) return 0.0;
+   return tickValue*PipToPoints(1.0)/tickSizePoints;
 }
-
-int LotDigitsFromStep(double step){
-   int digits = 0;
-
-   while(digits < 8 &&
-         MathAbs(step - NormalizeDouble(step, digits)) > 0.00000001){
-      digits++;
-   }
-
+int LotDigits(double step){
+   int digits=0;
+   while(digits<8 && MathAbs(step-NormalizeDouble(step,digits))>0.00000001) digits++;
    return digits;
 }
-
 double NormalizeLotsDown(double lots){
-   double minLot = MarketInfo(Symbol(), MODE_MINLOT);
-   double maxLot = MarketInfo(Symbol(), MODE_MAXLOT);
-   double step   = MarketInfo(Symbol(), MODE_LOTSTEP);
-
-   if(minLot <= 0 || maxLot <= 0 || step <= 0) return 0.0;
-
-   lots = MathMin(lots, maxLot);
-   lots = MathFloor((lots + 0.00000001) / step) * step;
-
-   if(lots < minLot) return 0.0;
-
-   return NormalizeDouble(lots, LotDigitsFromStep(step));
+   double minLot=MarketInfo(Symbol(),MODE_MINLOT);
+   double maxLot=MarketInfo(Symbol(),MODE_MAXLOT);
+   double step=MarketInfo(Symbol(),MODE_LOTSTEP);
+   if(minLot<=0 || maxLot<=0 || step<=0) return 0.0;
+   lots=MathMin(lots,maxLot);
+   lots=MathFloor((lots+0.00000001)/step)*step;
+   if(lots<minLot) return 0.0;
+   return NormalizeDouble(lots,LotDigits(step));
+}
+double LotsByRisk(double stopPips){
+   if(stopPips<=0 || RiskPercentPerTrade<=0) return 0.0;
+   double pipValue=PipValuePerLot();
+   if(pipValue<=0) return 0.0;
+   return NormalizeLotsDown(
+      AccountBalance()*(RiskPercentPerTrade/100.0)/(stopPips*pipValue)
+   );
+}
+double MinDistancePoints(){
+   return MathMax(MarketInfo(Symbol(),MODE_STOPLEVEL),
+                  MarketInfo(Symbol(),MODE_FREEZELEVEL));
+}
+void AdjustDistances(double &slPoints,double &tpPoints){
+   double minimum=MinDistancePoints();
+   if(slPoints>0 && slPoints<minimum) slPoints=minimum;
+   if(tpPoints>0 && tpPoints<minimum) tpPoints=minimum;
 }
 
-double CalcLotsByRisk(double stopPips){
-   if(stopPips <= 0 || RiskPercentPerTrade <= 0) return 0.0;
-
-   double riskMoney =
-      AccountBalance() * (RiskPercentPerTrade / 100.0);
-   double pipValue1Lot = PipValuePerLot();
-
-   if(riskMoney <= 0 || pipValue1Lot <= 0) return 0.0;
-
-   double rawLots =
-      riskMoney / (stopPips * pipValue1Lot);
-   double lots = NormalizeLotsDown(rawLots);
-
-   if(lots <= 0 && DebugMode){
-      Print(
-         "DBG: risk lot rejected. rawLots=",
-         DoubleToString(rawLots, 4),
-         " stopPips=",
-         DoubleToString(stopPips, 2)
-      );
-   }
-
-   return lots;
-}
-
-void AdjustSLTPForBroker(double &slPoints, double &tpPoints){
-   double stopLevelPts   = MarketInfo(Symbol(), MODE_STOPLEVEL);
-   double freezeLevelPts = MarketInfo(Symbol(), MODE_FREEZELEVEL);
-   double minDist = MathMax(stopLevelPts, freezeLevelPts);
-
-   if(slPoints > 0 && slPoints < minDist) slPoints = minDist;
-   if(tpPoints > 0 && tpPoints < minDist) tpPoints = minDist;
-}
-
-bool CrossUp(
-   double fastPrev,
-   double slowPrev,
-   double fastNow,
-   double slowNow
-){
-   return fastPrev <= slowPrev && fastNow > slowNow;
-}
-
-bool CrossDown(
-   double fastPrev,
-   double slowPrev,
-   double fastNow,
-   double slowNow
-){
-   return fastPrev >= slowPrev && fastNow < slowNow;
-}
-
-// Evaluate each completed signal bar exactly once.
-bool IsNewSignalBar(){
-   datetime signalBar =
-      iTime(Symbol(), InpTimeframe, 1);
-
-   if(signalBar <= 0 || signalBar == lastSignalBar){
-      return false;
-   }
-
-   lastSignalBar = signalBar;
+//--- signals
+bool CrossUp(double fp,double sp,double fn,double sn){ return fp<=sp && fn>sn; }
+bool CrossDown(double fp,double sp,double fn,double sn){ return fp>=sp && fn<sn; }
+bool NewSignalBar(){
+   datetime bar=iTime(Symbol(),InpTimeframe,1);
+   if(bar<=0 || bar==lastSignalBar) return false;
+   lastSignalBar=bar;
    return true;
 }
 
-void UpdateTrailingStops(){
-   if(!UseTrailing) return;
-
-   RefreshRates();
-
-   for(int i = 0; i < OrdersTotal(); i++){
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(OrderSymbol() != Symbol() ||
-         OrderMagicNumber() != MagicNumber) continue;
-
-      int type = OrderType();
-      if(type != OP_BUY && type != OP_SELL) continue;
-
-      double open = OrderOpenPrice();
-      double profitPips = 0.0;
-
-      if(type == OP_BUY){
-         profitPips =
-            PointsToPips((Bid - open) / Point);
-      }else{
-         profitPips =
-            PointsToPips((open - Ask) / Point);
-      }
-
-      // Signed profit prevents trailing from activating in a loss.
-      if(profitPips < TrailStartPips) continue;
-
-      double currentSL = OrderStopLoss();
-      double trailPts = PipToPoints(TrailStepPips);
-
-      if(type == OP_BUY){
-         double slDistancePts = trailPts;
-         double unusedTpPts = 0.0;
-         AdjustSLTPForBroker(slDistancePts, unusedTpPts);
-
-         double candidateSL =
-            NormalizeDouble(
-               Bid - slDistancePts * Point,
-               Digits
-            );
-
-         if((currentSL == 0 || candidateSL > currentSL) &&
-            candidateSL < Bid){
-            ResetLastError();
-
-            if(!OrderModify(
-               OrderTicket(),
-               OrderOpenPrice(),
-               candidateSL,
-               OrderTakeProfit(),
-               0,
-               clrAqua
-            )){
-               Print(
-                  "OrderModify trailing BUY failed. Err=",
-                  GetLastError()
-               );
-            }
-         }
-      }else{
-         double slDistancePts = trailPts;
-         double unusedTpPts = 0.0;
-         AdjustSLTPForBroker(slDistancePts, unusedTpPts);
-
-         double candidateSL =
-            NormalizeDouble(
-               Ask + slDistancePts * Point,
-               Digits
-            );
-
-         if((currentSL == 0 || candidateSL < currentSL) &&
-            candidateSL > Ask){
-            ResetLastError();
-
-            if(!OrderModify(
-               OrderTicket(),
-               OrderOpenPrice(),
-               candidateSL,
-               OrderTakeProfit(),
-               0,
-               clrAqua
-            )){
-               Print(
-                  "OrderModify trailing SELL failed. Err=",
-                  GetLastError()
-               );
-            }
-         }
-      }
+//--- R-based exits. Initial risk is persisted in the order comment.
+double InitialRiskPips(){
+   string comment=OrderComment();
+   int marker=StringFind(comment,"|R=");
+   if(marker>=0){
+      double stored=StrToDouble(StringSubstr(comment,marker+3));
+      if(stored>0) return stored;
    }
+   if(OrderStopLoss()<=0) return 0.0;
+   return PriceToPips(OrderOpenPrice()-OrderStopLoss());
 }
-
+bool ModifyDistanceAllowed(int type,double newSL){
+   double minimum=MinDistancePoints()*Point;
+   if(type==OP_BUY) return newSL<Bid-minimum;
+   if(type==OP_SELL) return newSL>Ask+minimum;
+   return false;
+}
 void UpdateBreakEven(){
    if(!UseBreakEven) return;
-
-   for(int i = 0; i < OrdersTotal(); i++){
-      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
-      if(OrderSymbol() != Symbol() ||
-         OrderMagicNumber() != MagicNumber) continue;
-
-      int type = OrderType();
-      double openPrice = OrderOpenPrice();
-      double currentSL = OrderStopLoss();
-      double takeProfit = OrderTakeProfit();
-
-      if(takeProfit == 0) continue;
-
-      if(type == OP_BUY){
-         double targetDist = takeProfit - openPrice;
-         double currentDist = Bid - openPrice;
-
-         if(currentDist >= targetDist * BE_Trigger_Mult){
-            double newSL =
-               NormalizeDouble(
-                  openPrice +
-                  PipToPoints(BE_Offset_Pips) * Point,
-                  Digits
-               );
-
-            if(newSL > currentSL && newSL < Bid){
-               if(!OrderModify(
-                  OrderTicket(),
-                  openPrice,
-                  newSL,
-                  takeProfit,
-                  0,
-                  clrGreen
-               )){
-                  Print(
-                     "BreakEven modify failed. Err=",
-                     GetLastError()
-                  );
-               }
-            }
-         }
-      }else if(type == OP_SELL){
-         double targetDist = openPrice - takeProfit;
-         double currentDist = openPrice - Ask;
-
-         if(currentDist >= targetDist * BE_Trigger_Mult){
-            double newSL =
-               NormalizeDouble(
-                  openPrice -
-                  PipToPoints(BE_Offset_Pips) * Point,
-                  Digits
-               );
-
-            if((currentSL == 0 || newSL < currentSL) &&
-               newSL > Ask){
-               if(!OrderModify(
-                  OrderTicket(),
-                  openPrice,
-                  newSL,
-                  takeProfit,
-                  0,
-                  clrGreen
-               )){
-                  Print(
-                     "BreakEven modify failed. Err=",
-                     GetLastError()
-                  );
-               }
-            }
-         }
-      }
+   RefreshRates();
+   for(int i=0;i<OrdersTotal();i++){
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      int type=OrderType();
+      if(type!=OP_BUY && type!=OP_SELL) continue;
+      double risk=InitialRiskPips();
+      if(risk<=0 || SignedProfitPips(type,OrderOpenPrice())<risk*BE_Trigger_R) continue;
+      double newSL=type==OP_BUY
+         ? OrderOpenPrice()+BE_Offset_Pips*PipSize()
+         : OrderOpenPrice()-BE_Offset_Pips*PipSize();
+      newSL=NormalizeDouble(newSL,Digits);
+      bool improves=type==OP_BUY
+         ? (OrderStopLoss()==0 || newSL>OrderStopLoss())
+         : (OrderStopLoss()==0 || newSL<OrderStopLoss());
+      if(!improves || !ModifyDistanceAllowed(type,newSL)) continue;
+      ResetLastError();
+      if(!OrderModify(OrderTicket(),OrderOpenPrice(),newSL,OrderTakeProfit(),0,clrGreen))
+         Print("BreakEven modify failed. Err=",GetLastError());
+   }
+}
+void UpdateTrailing(){
+   if(!UseTrailing) return;
+   RefreshRates();
+   for(int i=0;i<OrdersTotal();i++){
+      if(!OrderSelect(i,SELECT_BY_POS,MODE_TRADES)) continue;
+      if(OrderSymbol()!=Symbol() || OrderMagicNumber()!=MagicNumber) continue;
+      int type=OrderType();
+      if(type!=OP_BUY && type!=OP_SELL) continue;
+      double risk=InitialRiskPips();
+      if(risk<=0 || SignedProfitPips(type,OrderOpenPrice())<risk*TrailStartR) continue;
+      double distance=risk*TrailDistanceR;
+      double newSL=type==OP_BUY ? Bid-distance*PipSize() : Ask+distance*PipSize();
+      newSL=NormalizeDouble(newSL,Digits);
+      double step=TrailStepPips*PipSize();
+      bool improves=type==OP_BUY
+         ? (OrderStopLoss()==0 || newSL>=OrderStopLoss()+step)
+         : (OrderStopLoss()==0 || newSL<=OrderStopLoss()-step);
+      if(!improves || !ModifyDistanceAllowed(type,newSL)) continue;
+      ResetLastError();
+      if(!OrderModify(OrderTicket(),OrderOpenPrice(),newSL,OrderTakeProfit(),0,clrAqua))
+         Print("Trailing modify failed. Err=",GetLastError());
    }
 }
 
-bool PlaceOrder(int direction, double slPips, double tpPips){
+//--- orders
+bool PlaceOrder(int direction,double slPips,double tpPips){
+   if(slPips<=0 || tpPips<=0) return false;
    RefreshRates();
-
-   double price =
-      direction == OP_BUY ? Ask : Bid;
-   double slPts = PipToPoints(slPips);
-   double tpPts = PipToPoints(tpPips);
-
-   AdjustSLTPForBroker(slPts, tpPts);
-
-   double sl = 0.0;
-   double tp = 0.0;
-
-   if(direction == OP_BUY){
-      if(slPts > 0) sl = price - slPts * Point;
-      if(tpPts > 0) tp = price + tpPts * Point;
-   }else{
-      if(slPts > 0) sl = price + slPts * Point;
-      if(tpPts > 0) tp = price - tpPts * Point;
-   }
-
-   price = NormalizeDouble(price, Digits);
-   if(sl > 0) sl = NormalizeDouble(sl, Digits);
-   if(tp > 0) tp = NormalizeDouble(tp, Digits);
-
-   // Risk sizing must use the actual broker-adjusted stop distance.
-   double actualStopPips = 0.0;
-   if(sl > 0){
-      actualStopPips =
-         PointsToPips(MathAbs(price - sl) / Point);
-   }
-
-   double lots = 0.0;
-
-   if(LotMode == FixedLot){
-      lots = NormalizeLotsDown(FixedLots);
-   }else{
-      lots = CalcLotsByRisk(actualStopPips);
-   }
-
-   if(lots <= 0){
-      Print(
-         "Order rejected: invalid lot size. actualStopPips=",
-         DoubleToString(actualStopPips, 2)
-      );
+   double price=direction==OP_BUY ? Ask : Bid;
+   double slPoints=PipToPoints(slPips);
+   double tpPoints=PipToPoints(tpPips);
+   AdjustDistances(slPoints,tpPoints);
+   double sl=direction==OP_BUY ? price-slPoints*Point : price+slPoints*Point;
+   double tp=direction==OP_BUY ? price+tpPoints*Point : price-tpPoints*Point;
+   price=NormalizeDouble(price,Digits);
+   sl=NormalizeDouble(sl,Digits);
+   tp=NormalizeDouble(tp,Digits);
+   double actualStop=PriceToPips(price-sl);
+   double lots=LotMode==FixedLot ? NormalizeLotsDown(FixedLots) : LotsByRisk(actualStop);
+   if(lots<=0){
+      Print("Order rejected: invalid lots. stopPips=",DoubleToString(actualStop,2));
       return false;
    }
-
+   string comment="MA-RSI|R="+DoubleToString(actualStop,2);
    ResetLastError();
-
-   int ticket = OrderSend(
-      Symbol(),
-      direction,
-      lots,
-      price,
-      SlippagePoints,
-      sl,
-      tp,
-      "MA-RSI",
-      MagicNumber,
-      0,
-      clrDodgerBlue
-   );
-
-   if(ticket < 0){
-      Print(
-         "OrderSend failed. Err=",
-         GetLastError(),
-         " lots=",
-         DoubleToString(lots, 2),
-         " price=",
-         DoubleToString(price, Digits),
-         " sl=",
-         DoubleToString(sl, Digits),
-         " tp=",
-         DoubleToString(tp, Digits)
-      );
+   int ticket=OrderSend(Symbol(),direction,lots,price,SlippagePoints,
+                        sl,tp,comment,MagicNumber,0,clrDodgerBlue);
+   if(ticket<0){
+      Print("OrderSend failed. Err=",GetLastError()," lots=",DoubleToString(lots,2),
+            " price=",DoubleToString(price,Digits));
       return false;
    }
-
-   lastEntryTime = TimeCurrent();
-
-   if(gvLastEntryKey == ""){
-      gvLastEntryKey =
-         StringFormat("GV_LASTENTRY_%s_%d", Symbol(), MagicNumber);
-   }
-
-   GlobalVariableSet(
-      gvLastEntryKey,
-      (double)lastEntryTime
-   );
-
+   lastEntryTime=TimeCurrent();
+   GlobalVariableSet(gvLastEntryKey,(double)lastEntryTime);
    return true;
 }
 
+//--- entry
 void TryEntry(){
-   // Position management remains tick-based, but entries are evaluated
-   // once per completed InpTimeframe bar.
-   if(!IsNewSignalBar()) return;
-
-   if(HasOpenPosition()) return;
-   if(!IsTradingSession()) return;
-   if(!CooldownPassed()) return;
-
-   if(MaxTradesPerDay > 0 &&
-      TradesTodayCount() >= MaxTradesPerDay){
+   if(!NewSignalBar() || HasPosition() || !TradingSession() || !CooldownPassed()) return;
+   if(MaxTradesPerDay>0 && TradesToday()>=MaxTradesPerDay) return;
+   if(DailyLossReached()) return;
+   int losses=ConsecutiveLossesToday();
+   if(MaxConsecLoss>0 && losses>=MaxConsecLoss){
+      Print("Consecutive loss cap reached: ",losses);
       return;
    }
 
-   int consec = ConsecutiveLossesToday();
+   int tf=InpTimeframe,now=1,prev=2;
+   int required=(int)MathMax(MathMax(SlowEMA,ATRPeriod),MathMax(ADXPeriod,RSIPeriod))+3;
+   if(iBars(Symbol(),tf)<required) return;
 
-   if(MaxConsecLoss > 0 &&
-      consec >= MaxConsecLoss){
-      Print(
-         "Consecutive loss cap reached (Today: ",
-         consec,
-         ")"
-      );
-      return;
+   double atrPips=PriceToPips(iATR(Symbol(),tf,ATRPeriod,now));
+   if(atrPips<=0) return;
+   if(MinATR_Pips>0 && atrPips<MinATR_Pips) return;
+   double spread=SpreadPips();
+   if(MaxSpreadPips>0 && spread>MaxSpreadPips) return;
+   if(MaxSpreadATRRatio>0 && spread/atrPips>MaxSpreadATRRatio) return;
+
+   double fastNow=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,now);
+   double slowNow=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,now);
+   double fastPrev=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,prev);
+   double slowPrev=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,prev);
+   double rsi=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,now);
+   double closePrice=iClose(Symbol(),tf,now);
+   double adx=iADX(Symbol(),tf,ADXPeriod,PRICE_CLOSE,MODE_MAIN,now);
+   if(adx<ADXThreshold) return;
+
+   double slPips=SL_FixedPips,tpPips=TP_FixedPips;
+   if(SLTP_CalcMode==UseATR){
+      slPips=atrPips*SL_ATR_Mult;
+      tpPips=atrPips*TP_ATR_Mult;
    }
 
-   double spread = GetSpreadPips();
-
-   if(spread > MaxSpreadPips){
-      if(DebugMode){
-         Print(
-            "Spread too wide: ",
-            DoubleToString(spread, 1),
-            " pips"
-         );
-      }
-      return;
-   }
-
-   int tf = InpTimeframe;
-   int shiftNow = 1;
-   int shiftPrev = 2;
-
-   int requiredBars =
-      (int)MathMax(
-         MathMax(SlowEMA, ATRPeriod),
-         MathMax(ADXPeriod, RSIPeriod)
-      ) + shiftPrev + 1;
-
-   if(iBars(Symbol(), tf) < requiredBars) return;
-
-   double fastNow =
-      iMA(
-         Symbol(), tf, FastEMA, 0,
-         MODE_EMA, PRICE_CLOSE, shiftNow
-      );
-   double slowNow =
-      iMA(
-         Symbol(), tf, SlowEMA, 0,
-         MODE_EMA, PRICE_CLOSE, shiftNow
-      );
-   double fastPrev =
-      iMA(
-         Symbol(), tf, FastEMA, 0,
-         MODE_EMA, PRICE_CLOSE, shiftPrev
-      );
-   double slowPrev =
-      iMA(
-         Symbol(), tf, SlowEMA, 0,
-         MODE_EMA, PRICE_CLOSE, shiftPrev
-      );
-   double rsiNow =
-      iRSI(
-         Symbol(), tf, RSIPeriod,
-         PRICE_CLOSE, shiftNow
-      );
-   double closeNow =
-      iClose(Symbol(), tf, shiftNow);
-
-   double adx =
-      iADX(
-         Symbol(), tf, ADXPeriod,
-         PRICE_CLOSE, MODE_MAIN, shiftNow
-      );
-
-   if(adx < ADXThreshold) return;
-
-   double SLp = SL_FixedPips;
-   double TPp = TP_FixedPips;
-
-   if(SLTP_CalcMode == UseATR){
-      double atrPoints =
-         iATR(
-            Symbol(), tf, ATRPeriod, shiftNow
-         ) / Point;
-      double atrPips = PointsToPips(atrPoints);
-
-      SLp = atrPips * SL_ATR_Mult;
-      TPp = atrPips * TP_ATR_Mult;
-   }
-
-   bool longCond =
-      closeNow > slowNow &&
-      CrossUp(
-         fastPrev,
-         slowPrev,
-         fastNow,
-         slowNow
-      ) &&
-      rsiNow > RSI_Level_Buy;
-
-   bool shortCond =
-      closeNow < slowNow &&
-      CrossDown(
-         fastPrev,
-         slowPrev,
-         fastNow,
-         slowNow
-      ) &&
-      rsiNow < RSI_Level_Sell;
+   bool buy=closePrice>slowNow && CrossUp(fastPrev,slowPrev,fastNow,slowNow) &&
+            rsi>RSI_Level_Buy;
+   bool sell=closePrice<slowNow && CrossDown(fastPrev,slowPrev,fastNow,slowNow) &&
+             rsi<RSI_Level_Sell;
 
    if(UseMTF_Filter){
-      double mtfMaNow =
-         iMA(
-            Symbol(),
-            MTF_Timeframe,
-            MTF_MA_Period,
-            0,
-            MODE_EMA,
-            PRICE_CLOSE,
-            1
-         );
-      double mtfMaPrev =
-         iMA(
-            Symbol(),
-            MTF_Timeframe,
-            MTF_MA_Period,
-            0,
-            MODE_EMA,
-            PRICE_CLOSE,
-            2
-         );
-
-      bool isUptrend = mtfMaNow > mtfMaPrev;
-      bool isDowntrend = mtfMaNow < mtfMaPrev;
-
-      if(!isUptrend) longCond = false;
-      if(!isDowntrend) shortCond = false;
+      if(iBars(Symbol(),MTF_Timeframe)<MTF_MA_Period+3) return;
+      double mtfNow=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,1);
+      double mtfPrev=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,2);
+      if(mtfNow<=mtfPrev) buy=false;
+      if(mtfNow>=mtfPrev) sell=false;
    }
 
-   if(longCond){
-      if(PlaceOrder(OP_BUY, SLp, TPp)){
-         Print(
-            "BUY placed. SL=",
-            DoubleToString(SLp, 1),
-            " TP=",
-            DoubleToString(TPp, 1),
-            " ADX=",
-            DoubleToString(adx, 1)
-         );
-      }
-   }else if(shortCond){
-      if(PlaceOrder(OP_SELL, SLp, TPp)){
-         Print(
-            "SELL placed. SL=",
-            DoubleToString(SLp, 1),
-            " TP=",
-            DoubleToString(TPp, 1),
-            " ADX=",
-            DoubleToString(adx, 1)
-         );
-      }
-   }
+   if(buy && PlaceOrder(OP_BUY,slPips,tpPips))
+      Print("BUY placed. SL=",DoubleToString(slPips,1)," TP=",DoubleToString(tpPips,1));
+   else if(sell && PlaceOrder(OP_SELL,slPips,tpPips))
+      Print("SELL placed. SL=",DoubleToString(slPips,1)," TP=",DoubleToString(tpPips,1));
 }
 
+bool ValidHour(int value){ return value>=0 && value<=23; }
 int OnInit(){
-   gvLastEntryKey =
-      StringFormat(
-         "GV_LASTENTRY_%s_%d",
-         Symbol(),
-         MagicNumber
-      );
-
-   if(IsTesting() &&
-      GlobalVariableCheck(gvLastEntryKey)){
-      GlobalVariableDel(gvLastEntryKey);
-   }
-
-   lastSignalBar = 0;
+   bool invalid=FastEMA<=0 || SlowEMA<=0 || FastEMA>=SlowEMA ||
+      RSIPeriod<=0 || ATRPeriod<=0 || ADXPeriod<=0 || MTF_MA_Period<=0 ||
+      SL_FixedPips<=0 || TP_FixedPips<=0 || SL_ATR_Mult<=0 || TP_ATR_Mult<=0 ||
+      FixedLots<0 || RiskPercentPerTrade<0 || MaxSpreadPips<0 ||
+      MaxSpreadATRRatio<0 || MinATR_Pips<0 || MaxDailyLossPercent<0 ||
+      BE_Trigger_R<=0 || BE_Offset_Pips<0 || TrailStartR<=0 ||
+      TrailDistanceR<=0 || TrailStepPips<0 ||
+      !ValidHour(TokyoStartHour) || !ValidHour(TokyoEndHour) ||
+      !ValidHour(EuropeStartHour) || !ValidHour(EuropeEndHour) ||
+      !ValidHour(NYStartHour) || !ValidHour(NYEndHour);
+   if(invalid) return INIT_PARAMETERS_INCORRECT;
+   if(LotMode==FixedLot && FixedLots<=0) return INIT_PARAMETERS_INCORRECT;
+   if(LotMode==RiskPercent && RiskPercentPerTrade<=0) return INIT_PARAMETERS_INCORRECT;
+   if(StringFind(Symbol(),"USDJPY")<0)
+      Print("Warning: designed for USDJPY. Current symbol=",Symbol());
+   gvLastEntryKey=StringFormat("GV_LASTENTRY_%s_%d",Symbol(),MagicNumber);
+   if(IsTesting() && GlobalVariableCheck(gvLastEntryKey)) GlobalVariableDel(gvLastEntryKey);
+   lastSignalBar=0;
    return INIT_SUCCEEDED;
 }
-
-void OnDeinit(const int reason){
-}
-
+void OnDeinit(const int reason){}
 void OnTick(){
-   UpdateTrailingStops();
    UpdateBreakEven();
+   UpdateTrailing();
    TryEntry();
 }
