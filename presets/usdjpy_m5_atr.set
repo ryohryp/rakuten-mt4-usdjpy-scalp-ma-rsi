@@ -1,7 +1,15 @@
-# USDJPY M5 ATR-based SL/TP
+# USDJPY M5 ATR baseline for isolated exit testing
 SLTP_CalcMode=UseATR
+ATRPeriod=14
 SL_ATR_Mult=1.0
 TP_ATR_Mult=1.5
-UseTrailing=true
-TrailStartPips=4.0
-TrailStepPips=1.0
+UseTrailing=false
+TrailStartR=1.2
+TrailDistanceR=0.8
+TrailStepPips=0.5
+UseBreakEven=false
+BE_Trigger_R=1.0
+BE_Offset_Pips=0.2
+MinATR_Pips=3.0
+MaxSpreadPips=0.8
+MaxSpreadATRRatio=0.20
