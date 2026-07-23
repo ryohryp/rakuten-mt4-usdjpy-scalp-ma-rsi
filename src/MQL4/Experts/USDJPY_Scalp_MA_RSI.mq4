@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //| USDJPY_Scalp_MA_RSI.mq4                                         |
-//| Logic A: 5EMA/20EMA + RSI filter (Rakuten MT4 tuned)            |
+//| Pullback/reclaim strategy for Rakuten MT4 USDJPY                 |
 //+------------------------------------------------------------------+
 #property strict
 
@@ -8,8 +8,10 @@ input int InpTimeframe=PERIOD_M5;
 input int FastEMA=5;
 input int SlowEMA=20;
 input int RSIPeriod=14;
-input int RSI_Level_Buy=55;
-input int RSI_Level_Sell=45;
+input double RSIReclaimLevel=50.0;
+input double PullbackTolerancePips=0.5;
+input bool RequireReclaimCandle=true;
+input bool RequireADXRising=true;
 
 enum RiskMode { FixedLot=0, RiskPercent=1 };
 input RiskMode LotMode=RiskPercent;
@@ -61,6 +63,7 @@ input double ADXThreshold=20.0;
 input bool UseMTF_Filter=true;
 input int MTF_Timeframe=PERIOD_H1;
 input int MTF_MA_Period=20;
+input bool RequireMTFPriceAlignment=true;
 
 datetime lastEntryTime=0;
 datetime lastSignalBar=0;
@@ -264,8 +267,6 @@ void AdjustDistances(double &slPoints,double &tpPoints){
 }
 
 //--- signals
-bool CrossUp(double fp,double sp,double fn,double sn){ return fp<=sp && fn>sn; }
-bool CrossDown(double fp,double sp,double fn,double sn){ return fp>=sp && fn<sn; }
 bool NewSignalBar(){
    datetime bar=iTime(Symbol(),InpTimeframe,1);
    if(bar<=0 || bar==lastSignalBar) return false;
@@ -396,10 +397,57 @@ void TryEntry(){
    double slowNow=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,now);
    double fastPrev=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,prev);
    double slowPrev=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,prev);
-   double rsi=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,now);
-   double closePrice=iClose(Symbol(),tf,now);
-   double adx=iADX(Symbol(),tf,ADXPeriod,PRICE_CLOSE,MODE_MAIN,now);
-   if(adx<ADXThreshold) return;
+   double openNow=iOpen(Symbol(),tf,now);
+   double closeNow=iClose(Symbol(),tf,now);
+   double closePrev=iClose(Symbol(),tf,prev);
+   double lowPrev=iLow(Symbol(),tf,prev);
+   double highPrev=iHigh(Symbol(),tf,prev);
+   double rsiNow=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,now);
+   double rsiPrev=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,prev);
+   double adxNow=iADX(Symbol(),tf,ADXPeriod,PRICE_CLOSE,MODE_MAIN,now);
+   double adxPrev=iADX(Symbol(),tf,ADXPeriod,PRICE_CLOSE,MODE_MAIN,prev);
+   if(adxNow<ADXThreshold) return;
+   if(RequireADXRising && adxNow<=adxPrev) return;
+
+   double tolerance=PullbackTolerancePips*PipSize();
+   bool buyPullback=fastPrev>slowPrev &&
+                    lowPrev<=fastPrev+tolerance &&
+                    closePrev>=slowPrev-tolerance;
+   bool sellPullback=fastPrev<slowPrev &&
+                     highPrev>=fastPrev-tolerance &&
+                     closePrev<=slowPrev+tolerance;
+
+   bool buyReclaim=fastNow>slowNow &&
+                   closeNow>fastNow &&
+                   closeNow>highPrev &&
+                   rsiPrev<=RSIReclaimLevel &&
+                   rsiNow>RSIReclaimLevel;
+   bool sellReclaim=fastNow<slowNow &&
+                    closeNow<fastNow &&
+                    closeNow<lowPrev &&
+                    rsiPrev>=RSIReclaimLevel &&
+                    rsiNow<RSIReclaimLevel;
+
+   if(RequireReclaimCandle){
+      if(closeNow<=openNow) buyReclaim=false;
+      if(closeNow>=openNow) sellReclaim=false;
+   }
+
+   bool buy=buyPullback && buyReclaim;
+   bool sell=sellPullback && sellReclaim;
+
+   if(UseMTF_Filter){
+      if(iBars(Symbol(),MTF_Timeframe)<MTF_MA_Period+3) return;
+      double mtfNow=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,1);
+      double mtfPrev=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,2);
+      double mtfClose=iClose(Symbol(),MTF_Timeframe,1);
+      if(mtfNow<=mtfPrev) buy=false;
+      if(mtfNow>=mtfPrev) sell=false;
+      if(RequireMTFPriceAlignment){
+         if(mtfClose<=mtfNow) buy=false;
+         if(mtfClose>=mtfNow) sell=false;
+      }
+   }
 
    double slPips=SL_FixedPips,tpPips=TP_FixedPips;
    if(SLTP_CalcMode==UseATR){
@@ -407,29 +455,19 @@ void TryEntry(){
       tpPips=atrPips*TP_ATR_Mult;
    }
 
-   bool buy=closePrice>slowNow && CrossUp(fastPrev,slowPrev,fastNow,slowNow) &&
-            rsi>RSI_Level_Buy;
-   bool sell=closePrice<slowNow && CrossDown(fastPrev,slowPrev,fastNow,slowNow) &&
-             rsi<RSI_Level_Sell;
-
-   if(UseMTF_Filter){
-      if(iBars(Symbol(),MTF_Timeframe)<MTF_MA_Period+3) return;
-      double mtfNow=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,1);
-      double mtfPrev=iMA(Symbol(),MTF_Timeframe,MTF_MA_Period,0,MODE_EMA,PRICE_CLOSE,2);
-      if(mtfNow<=mtfPrev) buy=false;
-      if(mtfNow>=mtfPrev) sell=false;
-   }
-
    if(buy && PlaceOrder(OP_BUY,slPips,tpPips))
-      Print("BUY placed. SL=",DoubleToString(slPips,1)," TP=",DoubleToString(tpPips,1));
+      Print("BUY pullback placed. SL=",DoubleToString(slPips,1),
+            " TP=",DoubleToString(tpPips,1));
    else if(sell && PlaceOrder(OP_SELL,slPips,tpPips))
-      Print("SELL placed. SL=",DoubleToString(slPips,1)," TP=",DoubleToString(tpPips,1));
+      Print("SELL pullback placed. SL=",DoubleToString(slPips,1),
+            " TP=",DoubleToString(tpPips,1));
 }
 
 bool ValidHour(int value){ return value>=0 && value<=23; }
 int OnInit(){
    bool invalid=FastEMA<=0 || SlowEMA<=0 || FastEMA>=SlowEMA ||
-      RSIPeriod<=0 || ATRPeriod<=0 || ADXPeriod<=0 || MTF_MA_Period<=0 ||
+      RSIPeriod<=0 || RSIReclaimLevel<=0 || RSIReclaimLevel>=100 ||
+      PullbackTolerancePips<0 || ATRPeriod<=0 || ADXPeriod<=0 || MTF_MA_Period<=0 ||
       SL_FixedPips<=0 || TP_FixedPips<=0 || SL_ATR_Mult<=0 || TP_ATR_Mult<=0 ||
       FixedLots<0 || RiskPercentPerTrade<0 || MaxSpreadPips<0 ||
       MaxSpreadATRRatio<0 || MinATR_Pips<0 || MaxDailyLossPercent<0 ||

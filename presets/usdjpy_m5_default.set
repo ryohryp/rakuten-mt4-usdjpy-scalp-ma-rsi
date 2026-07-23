@@ -1,11 +1,13 @@
-# USDJPY M5 safe baseline
+# USDJPY M5 pullback/reclaim baseline
 # MT4 .set files require numeric values for timeframe and enum inputs.
 InpTimeframe=5
 FastEMA=5
 SlowEMA=20
 RSIPeriod=14
-RSI_Level_Buy=55
-RSI_Level_Sell=45
+RSIReclaimLevel=50.0
+PullbackTolerancePips=0.5
+RequireReclaimCandle=true
+RequireADXRising=true
 LotMode=1
 FixedLots=0.10
 RiskPercentPerTrade=0.25
@@ -48,3 +50,4 @@ ADXThreshold=20.0
 UseMTF_Filter=true
 MTF_Timeframe=60
 MTF_MA_Period=20
+RequireMTFPriceAlignment=true
