@@ -1,14 +1,15 @@
 # USDJPY M5 safe baseline
-InpTimeframe=PERIOD_M5
+# MT4 .set files require numeric values for timeframe and enum inputs.
+InpTimeframe=5
 FastEMA=5
 SlowEMA=20
 RSIPeriod=14
 RSI_Level_Buy=55
 RSI_Level_Sell=45
-LotMode=RiskPercent
+LotMode=1
 FixedLots=0.10
 RiskPercentPerTrade=0.25
-SLTP_CalcMode=UseATR
+SLTP_CalcMode=1
 SL_FixedPips=6.0
 TP_FixedPips=9.0
 ATRPeriod=14
@@ -45,5 +46,5 @@ MagicNumber=20251101
 ADXPeriod=14
 ADXThreshold=20.0
 UseMTF_Filter=true
-MTF_Timeframe=PERIOD_H1
+MTF_Timeframe=60
 MTF_MA_Period=20
