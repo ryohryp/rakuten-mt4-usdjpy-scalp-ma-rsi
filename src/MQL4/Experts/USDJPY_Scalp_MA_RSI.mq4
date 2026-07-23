@@ -448,7 +448,6 @@ int OnInit(){
    lastSignalBar=0;
    return INIT_SUCCEEDED;
 }
-void OnDeinit(const int reason){}
 void OnTick(){
    UpdateBreakEven();
    UpdateTrailing();
