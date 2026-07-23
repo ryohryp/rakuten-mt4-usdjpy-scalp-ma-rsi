@@ -8,6 +8,8 @@ Thumbs.db
 *.mqh~
 *.log
 *.tmp
+mqlcache.dat
+
 
 # Backtest outputs (大きいものは追わない)
 backtests/reports/*.html
