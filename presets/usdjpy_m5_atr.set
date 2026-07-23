@@ -1,5 +1,6 @@
 # USDJPY M5 ATR baseline for isolated exit testing
-SLTP_CalcMode=UseATR
+# MT4 .set files require numeric enum values.
+SLTP_CalcMode=1
 ATRPeriod=14
 SL_ATR_Mult=1.0
 TP_ATR_Mult=1.5
