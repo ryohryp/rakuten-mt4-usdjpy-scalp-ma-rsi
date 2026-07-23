@@ -9,9 +9,11 @@ input int FastEMA=5;
 input int SlowEMA=20;
 input int RSIPeriod=14;
 input double RSIReclaimLevel=50.0;
+input double RSIMomentumBuffer=2.0;
+input int PullbackLookbackBars=3;
 input double PullbackTolerancePips=0.5;
 input bool RequireReclaimCandle=true;
-input bool RequireADXRising=true;
+input bool RequireADXRising=false;
 
 enum RiskMode { FixedLot=0, RiskPercent=1 };
 input RiskMode LotMode=RiskPercent;
@@ -273,6 +275,26 @@ bool NewSignalBar(){
    lastSignalBar=bar;
    return true;
 }
+bool HasBuyPullback(int tf,int firstShift,int lookback,double tolerance){
+   for(int shift=firstShift;shift<firstShift+lookback;shift++){
+      double fast=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,shift);
+      double slow=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,shift);
+      double low=iLow(Symbol(),tf,shift);
+      double close=iClose(Symbol(),tf,shift);
+      if(fast>slow && low<=fast+tolerance && close>=slow-tolerance) return true;
+   }
+   return false;
+}
+bool HasSellPullback(int tf,int firstShift,int lookback,double tolerance){
+   for(int shift=firstShift;shift<firstShift+lookback;shift++){
+      double fast=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,shift);
+      double slow=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,shift);
+      double high=iHigh(Symbol(),tf,shift);
+      double close=iClose(Symbol(),tf,shift);
+      if(fast<slow && high>=fast-tolerance && close<=slow+tolerance) return true;
+   }
+   return false;
+}
 
 //--- R-based exits. Initial risk is persisted in the order comment.
 double InitialRiskPips(){
@@ -383,7 +405,8 @@ void TryEntry(){
    }
 
    int tf=InpTimeframe,now=1,prev=2;
-   int required=(int)MathMax(MathMax(SlowEMA,ATRPeriod),MathMax(ADXPeriod,RSIPeriod))+3;
+   int required=(int)MathMax(MathMax(SlowEMA,ATRPeriod),MathMax(ADXPeriod,RSIPeriod))
+      +PullbackLookbackBars+3;
    if(iBars(Symbol(),tf)<required) return;
 
    double atrPips=PriceToPips(iATR(Symbol(),tf,ATRPeriod,now));
@@ -395,13 +418,9 @@ void TryEntry(){
 
    double fastNow=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,now);
    double slowNow=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,now);
-   double fastPrev=iMA(Symbol(),tf,FastEMA,0,MODE_EMA,PRICE_CLOSE,prev);
-   double slowPrev=iMA(Symbol(),tf,SlowEMA,0,MODE_EMA,PRICE_CLOSE,prev);
    double openNow=iOpen(Symbol(),tf,now);
    double closeNow=iClose(Symbol(),tf,now);
    double closePrev=iClose(Symbol(),tf,prev);
-   double lowPrev=iLow(Symbol(),tf,prev);
-   double highPrev=iHigh(Symbol(),tf,prev);
    double rsiNow=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,now);
    double rsiPrev=iRSI(Symbol(),tf,RSIPeriod,PRICE_CLOSE,prev);
    double adxNow=iADX(Symbol(),tf,ADXPeriod,PRICE_CLOSE,MODE_MAIN,now);
@@ -410,23 +429,21 @@ void TryEntry(){
    if(RequireADXRising && adxNow<=adxPrev) return;
 
    double tolerance=PullbackTolerancePips*PipSize();
-   bool buyPullback=fastPrev>slowPrev &&
-                    lowPrev<=fastPrev+tolerance &&
-                    closePrev>=slowPrev-tolerance;
-   bool sellPullback=fastPrev<slowPrev &&
-                     highPrev>=fastPrev-tolerance &&
-                     closePrev<=slowPrev+tolerance;
+   bool buyPullback=HasBuyPullback(tf,prev,PullbackLookbackBars,tolerance);
+   bool sellPullback=HasSellPullback(tf,prev,PullbackLookbackBars,tolerance);
+   double buyRsiThreshold=RSIReclaimLevel+RSIMomentumBuffer;
+   double sellRsiThreshold=RSIReclaimLevel-RSIMomentumBuffer;
 
    bool buyReclaim=fastNow>slowNow &&
                    closeNow>fastNow &&
-                   closeNow>highPrev &&
-                   rsiPrev<=RSIReclaimLevel &&
-                   rsiNow>RSIReclaimLevel;
+                   closeNow>closePrev &&
+                   rsiNow>=buyRsiThreshold &&
+                   rsiNow>rsiPrev;
    bool sellReclaim=fastNow<slowNow &&
                     closeNow<fastNow &&
-                    closeNow<lowPrev &&
-                    rsiPrev>=RSIReclaimLevel &&
-                    rsiNow<RSIReclaimLevel;
+                    closeNow<closePrev &&
+                    rsiNow<=sellRsiThreshold &&
+                    rsiNow<rsiPrev;
 
    if(RequireReclaimCandle){
       if(closeNow<=openNow) buyReclaim=false;
@@ -467,6 +484,8 @@ bool ValidHour(int value){ return value>=0 && value<=23; }
 int OnInit(){
    bool invalid=FastEMA<=0 || SlowEMA<=0 || FastEMA>=SlowEMA ||
       RSIPeriod<=0 || RSIReclaimLevel<=0 || RSIReclaimLevel>=100 ||
+      RSIMomentumBuffer<0 || RSIReclaimLevel+RSIMomentumBuffer>=100 ||
+      RSIReclaimLevel-RSIMomentumBuffer<=0 || PullbackLookbackBars<=0 ||
       PullbackTolerancePips<0 || ATRPeriod<=0 || ADXPeriod<=0 || MTF_MA_Period<=0 ||
       SL_FixedPips<=0 || TP_FixedPips<=0 || SL_ATR_Mult<=0 || TP_ATR_Mult<=0 ||
       FixedLots<0 || RiskPercentPerTrade<0 || MaxSpreadPips<0 ||
