@@ -226,9 +226,9 @@ bool HasPosition(){
 //--- lot sizing
 double PipValuePerLot(){
    double tickValue=MarketInfo(Symbol(),MODE_TICKVALUE);
-   double tickSizePoints=MarketInfo(Symbol(),MODE_TICKSIZE);
-   if(tickValue<=0 || tickSizePoints<=0) return 0.0;
-   return tickValue*PipToPoints(1.0)/tickSizePoints;
+   double tickSizePrice=MarketInfo(Symbol(),MODE_TICKSIZE);
+   if(tickValue<=0 || tickSizePrice<=0) return 0.0;
+   return tickValue*PipSize()/tickSizePrice;
 }
 int LotDigits(double step){
    int digits=0;
