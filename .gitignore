@@ -19,3 +19,11 @@ backtests/reports/*.gif
 *.zip
 *.7z
 *.rar
+
+# MT4 Tester temporary files & logs
+presets/caches/
+presets/files/
+presets/history/
+presets/logs/
+presets/*.ini
+presets/*.chr
