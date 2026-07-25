@@ -3,6 +3,8 @@
 
 #include <AIData/RunContext.mqh>
 
+void AiFinalizePendingOutcomes();
+
 int gAiManifestHandle=INVALID_HANDLE;
 int gAiCandidateHandle=INVALID_HANDLE;
 int gAiDecisionHandle=INVALID_HANDLE;
@@ -51,6 +53,7 @@ int AiOpenCsv(const string path)
 
 void AiLoggerShutdown()
 {
+   AiFinalizePendingOutcomes();
    AiCloseHandle(gAiManifestHandle);
    AiCloseHandle(gAiCandidateHandle);
    AiCloseHandle(gAiDecisionHandle);
