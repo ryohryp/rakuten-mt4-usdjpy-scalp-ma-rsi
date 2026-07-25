@@ -41,12 +41,12 @@ function Get-RunIdMismatches {
     return @($Rows | Where-Object { $_.run_id -ne $RunId })
 }
 
-$manifest = Import-RequiredCsv -Prefix 'run_manifest' -BasePath $AiDataPath -Id $RunId
-$candidates = Import-RequiredCsv -Prefix 'signal_candidates' -BasePath $AiDataPath -Id $RunId
-$decisions = Import-RequiredCsv -Prefix 'signal_decisions' -BasePath $AiDataPath -Id $RunId
-$outcomes = Import-RequiredCsv -Prefix 'signal_outcomes' -BasePath $AiDataPath -Id $RunId
-$trades = Import-RequiredCsv -Prefix 'trade_results' -BasePath $AiDataPath -Id $RunId
-$errors = Import-RequiredCsv -Prefix 'runtime_errors' -BasePath $AiDataPath -Id $RunId
+$manifest = @(Import-RequiredCsv -Prefix 'run_manifest' -BasePath $AiDataPath -Id $RunId)
+$candidates = @(Import-RequiredCsv -Prefix 'signal_candidates' -BasePath $AiDataPath -Id $RunId)
+$decisions = @(Import-RequiredCsv -Prefix 'signal_decisions' -BasePath $AiDataPath -Id $RunId)
+$outcomes = @(Import-RequiredCsv -Prefix 'signal_outcomes' -BasePath $AiDataPath -Id $RunId)
+$trades = @(Import-RequiredCsv -Prefix 'trade_results' -BasePath $AiDataPath -Id $RunId)
+$errors = @(Import-RequiredCsv -Prefix 'runtime_errors' -BasePath $AiDataPath -Id $RunId)
 
 $manifestCountInvalid = $manifest.Count -ne 1
 $manifestEaVersionInvalid = $manifest.Count -eq 1 -and $manifest[0].ea_version -ne $ExpectedEaVersion
@@ -57,11 +57,11 @@ $outcomeIds = @($outcomes | ForEach-Object signal_id)
 $tradeSignalIds = @($trades | ForEach-Object signal_id)
 $tradeTickets = @($trades | ForEach-Object ticket)
 
-$duplicateCandidates = Get-DuplicateGroups -Values $candidateIds
-$duplicateDecisions = Get-DuplicateGroups -Values $decisionIds
-$duplicateOutcomes = Get-DuplicateGroups -Values $outcomeIds
-$duplicateTradeSignals = Get-DuplicateGroups -Values $tradeSignalIds
-$duplicateTradeTickets = Get-DuplicateGroups -Values $tradeTickets
+$duplicateCandidates = @(Get-DuplicateGroups -Values $candidateIds)
+$duplicateDecisions = @(Get-DuplicateGroups -Values $decisionIds)
+$duplicateOutcomes = @(Get-DuplicateGroups -Values $outcomeIds)
+$duplicateTradeSignals = @(Get-DuplicateGroups -Values $tradeSignalIds)
+$duplicateTradeTickets = @(Get-DuplicateGroups -Values $tradeTickets)
 
 $candidateSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$candidateIds)
 $decisionSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$decisionIds)
@@ -148,28 +148,30 @@ $outcomes |
     Format-Table -AutoSize
 
 $failed = @(
-    [int]$manifestCountInvalid,
-    [int]$manifestEaVersionInvalid,
-    $runIdMismatches.Count,
-    $duplicateCandidates.Count,
-    $duplicateDecisions.Count,
-    $duplicateOutcomes.Count,
-    $duplicateTradeSignals.Count,
-    $duplicateTradeTickets.Count,
-    $missingDecisions.Count,
-    $missingOutcomes.Count,
-    $orphanDecisions.Count,
-    $orphanOutcomes.Count,
-    $orphanTrades.Count,
-    $missingTradeResults.Count,
-    $tradesWithoutTradeDecision.Count,
-    $invalidOutcomeCodes.Count,
-    $invalidLabels.Count,
-    $invalidTrackerVersions.Count,
-    $invalidExpiredBars.Count,
-    $negativeExcursions.Count,
-    $errors.Count
-) | Where-Object { $_ -gt 0 }
+    @(
+        [int]$manifestCountInvalid,
+        [int]$manifestEaVersionInvalid,
+        $runIdMismatches.Count,
+        $duplicateCandidates.Count,
+        $duplicateDecisions.Count,
+        $duplicateOutcomes.Count,
+        $duplicateTradeSignals.Count,
+        $duplicateTradeTickets.Count,
+        $missingDecisions.Count,
+        $missingOutcomes.Count,
+        $orphanDecisions.Count,
+        $orphanOutcomes.Count,
+        $orphanTrades.Count,
+        $missingTradeResults.Count,
+        $tradesWithoutTradeDecision.Count,
+        $invalidOutcomeCodes.Count,
+        $invalidLabels.Count,
+        $invalidTrackerVersions.Count,
+        $invalidExpiredBars.Count,
+        $negativeExcursions.Count,
+        $errors.Count
+    ) | Where-Object { $_ -gt 0 }
+)
 
 if ($failed.Count -gt 0) {
     throw 'Outcome CSV validation failed. Review the counts above.'
