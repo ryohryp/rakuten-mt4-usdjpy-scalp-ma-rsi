@@ -5,6 +5,48 @@ H1のトレンド方向に対するM5の押し目・戻りから、RSIとADXの�
 
 > 現在は研究・データ収集段階です。既存バックテストでは正の期待値を確認できていないため、リアル口座投入を前提としません。
 
+## インストール
+
+Phase 1以降のEAは複数ファイル構成です。`USDJPY_Scalp_MA_RSI.mq4`だけをコピーすると、`AIData/*.mqh`を開けず、その後に型・関数未定義の大量エラーが連鎖します。
+
+### PowerShellによる一括配置
+
+リポジトリのルートで次を実行します。`TerminalDataPath`には、Rakuten MT4の「ファイル → データフォルダを開く」で表示されるフォルダを指定します。
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\install-rakuten-mt4.ps1 `
+  -TerminalDataPath "$env:APPDATA\MetaQuotes\Terminal\A84B568DA10F82FE5A8FF6A859153D6F"
+```
+
+スクリプトは次を配置し、6ファイルが存在することを検証します。
+
+```text
+<MQL4>/Experts/USDJPY_Scalp_MA_RSI.mq4
+<MQL4>/Include/AIData/Types.mqh
+<MQL4>/Include/AIData/RunContext.mqh
+<MQL4>/Include/AIData/CsvWriter.mqh
+<MQL4>/Include/AIData/SignalLogger.mqh
+<MQL4>/Include/AIData/TradeResultLogger.mqh
+<MQL4>/Presets/usdjpy_m5_default.set
+```
+
+配置後は、**同じRakuten MT4端末からMetaEditorを開き直し**、`USDJPY_Scalp_MA_RSI.mq4`をコンパイルします。
+
+### 手動配置
+
+スクリプトを使わない場合は、次のディレクトリ構造を保ったままコピーします。
+
+```text
+src/MQL4/Experts/USDJPY_Scalp_MA_RSI.mq4
+  → <terminal>/MQL4/Experts/USDJPY_Scalp_MA_RSI.mq4
+
+src/MQL4/Include/AIData/*.mqh
+  → <terminal>/MQL4/Include/AIData/*.mqh
+```
+
+最初の5件が`can't open ... Include\AIData\*.mqh`で、その後に多数の`declaration without type`や`function not defined`が出る場合、後続エラーはinclude不足によるカスケードです。まず5つの`.mqh`の配置を直します。
+
 ## エントリー基準
 
 買いは次の条件をすべて満たした確定足で判定し、売りは反対条件です。
