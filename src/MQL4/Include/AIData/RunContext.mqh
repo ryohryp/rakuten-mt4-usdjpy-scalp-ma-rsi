@@ -3,6 +3,7 @@
 
 string gAiRunId="";
 string gAiParameterHash="";
+datetime gAiRunStartTime=0;
 int gAiSignalSequence=0;
 
 string AiHexDigit(const int value)
@@ -23,12 +24,12 @@ string AiHex8(const uint value)
 
 uint AiFnv1a32(const string value)
 {
-   uint hash=2166136261;
+   uint hash=0x811C9DC5;
    int length=StringLen(value);
    for(int i=0;i<length;i++)
    {
       hash^=(uint)StringGetCharacter(value,i);
-      hash*=16777619;
+      hash*=0x01000193;
    }
    return hash;
 }
@@ -67,6 +68,7 @@ void AiInitializeRunContext(const int timeframe,
    datetime marketNow=TimeCurrent();
    if(marketNow<=0) marketNow=TimeLocal();
    datetime localNow=TimeLocal();
+   gAiRunStartTime=marketNow;
    gAiParameterHash=AiHex8(AiFnv1a32(parameterFingerprint));
    string marketStamp=AiSanitizeToken(TimeToString(marketNow,TIME_DATE|TIME_MINUTES));
    string localStamp=AiSanitizeToken(TimeToString(localNow,TIME_DATE|TIME_SECONDS));
