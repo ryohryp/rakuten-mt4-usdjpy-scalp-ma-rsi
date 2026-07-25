@@ -3,6 +3,8 @@
 **Rakuten MetaTrader 4** を想定した USDJPY 向けスキャルピングEAです。
 H1のトレンド方向に対するM5の押し目・戻りから、RSIとADXの再加速を確認してエントリーします。
 
+> 現在は研究・データ収集段階です。既存バックテストでは正の期待値を確認できていないため、リアル口座投入を前提としません。
+
 ## エントリー基準
 
 買いは次の条件をすべて満たした確定足で判定し、売りは反対条件です。
@@ -28,9 +30,34 @@ ADXの前足比上昇は任意設定です。初期版では、押し目・RSI50
 - ブローカー調整後の実SL距離でリスクロットを計算
 - 初期リスクを注文コメントに保存し、建値・トレーリングをR倍で管理
 
+## AI学習データログ（Phase 1）
+
+`EnableDatasetLogging=true` の場合、raw setup成立後、安全フィルターより前に候補を保存します。発注された候補だけでなく、セッション外、既存ポジション、スプレッド、日次制限などで見送った候補も記録します。
+
+出力先はMT4のファイル領域にある `AIData/` です。Strategy Testerでは `Tester/Files/AIData/` に分離されます。
+
+```text
+AIData/
+  run_manifest_<run_id>.csv
+  signal_candidates_<run_id>.csv
+  signal_decisions_<run_id>.csv
+  trade_results_<run_id>.csv
+  runtime_errors_<run_id>.csv
+```
+
+Phase 1で記録する内容:
+
+- 実行条件とバージョン情報
+- 候補時点の価格、ATR、RSI、ADX、H1方向、ローソク足形状
+- deterministic guardの最初の見送り理由
+- `signal_id ↔ signal_key ↔ ticket` の関連
+- 実取引の損益、R損益、保有時間、MFE/MAE
+
+注文コメントには長い`signal_id`ではなく短い`signal_key`を保存します。AI推論と仮想TP/SL Outcome追跡はまだ実装しておらず、現在の判断モードは常に`OFF`です。詳細は [`docs/ai-learning-data-spec.md`](docs/ai-learning-data-spec.md) を参照してください。
+
 ## 推奨ベースライン
 
-`presets/usdjpy_m5_default.set` は入口ロジック単体を比較するため、次を既定値にしています。
+`presets/usdjpy_m5_default.set` は入口ロジックとログ出力を比較するため、次を既定値にしています。
 
 - RSI中心水準: 50
 - RSIモメンタム幅: 2（買い52以上、売り48以下）
@@ -38,6 +65,8 @@ ADXの前足比上昇は任意設定です。初期版では、押し目・RSI50
 - 押し目許容幅: 0.5pips
 - ADX上昇必須: OFF
 - H1価格方向一致必須
+- 学習データログ: ON
+- 特徴量schema: `1.0.0`
 - 1取引リスク: 0.25%
 - SL/TP: ATRの1.0倍 / 1.5倍
 - 建値移動: OFF
@@ -53,9 +82,10 @@ ADXの前足比上昇は任意設定です。初期版では、押し目・RSI50
 
 ## 検証順序
 
-1. 建値・トレーリングOFFの入口ベースラインを検証
-2. 買い・売りの成績を分離して確認
-3. 年別・月別の偏りを確認
-4. 入口がプラス期待値になった後だけ出口変更を比較
+1. MetaEditorでエラー0・警告0を確認
+2. ログOFF版とログON版で注文結果が一致することを確認
+3. candidateとdecisionが`signal_id`で1対1に結合できることを確認
+4. TRADE候補がticketとtrade resultへ結合できることを確認
+5. 次のPhase 2で全候補の仮想TP/SL Outcomeを追加
 
 リアル口座投入前に、変動スプレッドとスリッページを含むバックテストおよびフォワードテストを実施してください。
