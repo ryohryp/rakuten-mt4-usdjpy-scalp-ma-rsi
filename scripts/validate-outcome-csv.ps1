@@ -30,13 +30,19 @@ function Import-RequiredCsv {
 }
 
 function Get-DuplicateGroups {
-    param([Parameter(Mandatory = $true)][object[]]$Values)
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$Values = @()
+    )
 
     return @($Values | Group-Object | Where-Object Count -gt 1)
 }
 
 function Get-RunIdMismatches {
-    param([Parameter(Mandatory = $true)][object[]]$Rows)
+    param(
+        [AllowEmptyCollection()]
+        [object[]]$Rows = @()
+    )
 
     return @($Rows | Where-Object { $_.run_id -ne $RunId })
 }
