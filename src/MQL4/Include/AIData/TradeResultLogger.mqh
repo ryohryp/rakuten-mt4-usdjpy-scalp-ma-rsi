@@ -3,6 +3,7 @@
 
 #include <AIData/RunContext.mqh>
 #include <AIData/CsvWriter.mqh>
+#include <AIData/OutcomeTracker.mqh>
 
 TrackedTrade gAiTrackedTrades[];
 
@@ -91,6 +92,8 @@ void AiUpdateOpenExcursions(TrackedTrade &trade,const double pipSize)
 
 void AiUpdateTrackedTrades(const double pipSize)
 {
+   AiUpdatePendingOutcomes(pipSize);
+
    for(int i=0;i<ArraySize(gAiTrackedTrades);i++)
    {
       if(!gAiTrackedTrades[i].active || gAiTrackedTrades[i].logged) continue;
@@ -117,6 +120,8 @@ void AiUpdateTrackedTrades(const double pipSize)
                              "trade_results",gAiTrackedTrades[i].signalId);
       }
    }
+
+   if(IsStopped()) AiFinalizePendingOutcomes();
 }
 
 #endif
