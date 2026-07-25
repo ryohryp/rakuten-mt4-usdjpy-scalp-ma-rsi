@@ -89,12 +89,16 @@ void AiResolvePendingOutcome(PendingOutcome &pending,
                              const int label,
                              const int barsElapsed)
 {
+   int normalizedBars=barsElapsed<0 ? 0 : barsElapsed;
+   long elapsedSeconds=(long)(TimeCurrent()-pending.signalTime);
+   if(elapsedSeconds<0) elapsedSeconds=0;
+
    pending.resolved=true;
    pending.outcome=outcome;
    pending.labelTpBeforeSl=label;
    pending.outcomeTime=TimeCurrent();
-   pending.barsToOutcome=(int)MathMax(0,barsElapsed);
-   pending.secondsToOutcome=(long)MathMax(0,TimeCurrent()-pending.signalTime);
+   pending.barsToOutcome=normalizedBars;
+   pending.secondsToOutcome=elapsedSeconds;
 }
 
 bool AiPersistPendingOutcome(const int index)
