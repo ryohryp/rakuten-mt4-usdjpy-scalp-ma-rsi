@@ -1,6 +1,8 @@
 #ifndef __AI_DATA_RUN_CONTEXT_MQH__
 #define __AI_DATA_RUN_CONTEXT_MQH__
 
+#include <AIData/Types.mqh>
+
 string gAiRunId="";
 string gAiParameterHash="";
 datetime gAiRunStartTime=0;
