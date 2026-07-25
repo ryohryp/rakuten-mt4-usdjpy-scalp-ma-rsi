@@ -120,8 +120,6 @@ void AiUpdateTrackedTrades(const double pipSize)
                              "trade_results",gAiTrackedTrades[i].signalId);
       }
    }
-
-   if(IsStopped()) AiFinalizePendingOutcomes();
 }
 
 #endif
