@@ -19,13 +19,14 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -TerminalDataPath "$env:APPDATA\MetaQuotes\Terminal\A84B568DA10F82FE5A8FF6A859153D6F"
 ```
 
-スクリプトは次を配置し、6ファイルが存在することを検証します。
+スクリプトは次を配置し、7ファイルが存在することを検証します。
 
 ```text
 <MQL4>/Experts/USDJPY_Scalp_MA_RSI.mq4
 <MQL4>/Include/AIData/Types.mqh
 <MQL4>/Include/AIData/RunContext.mqh
 <MQL4>/Include/AIData/CsvWriter.mqh
+<MQL4>/Include/AIData/OutcomeTracker.mqh
 <MQL4>/Include/AIData/SignalLogger.mqh
 <MQL4>/Include/AIData/TradeResultLogger.mqh
 <MQL4>/Presets/usdjpy_m5_default.set
@@ -45,7 +46,7 @@ src/MQL4/Include/AIData/*.mqh
   → <terminal>/MQL4/Include/AIData/*.mqh
 ```
 
-最初の5件が`can't open ... Include\AIData\*.mqh`で、その後に多数の`declaration without type`や`function not defined`が出る場合、後続エラーはinclude不足によるカスケードです。まず5つの`.mqh`の配置を直します。
+最初のエラーが`can't open ... Include\AIData\*.mqh`で、その後に多数の`declaration without type`や`function not defined`が出る場合、後続エラーはinclude不足によるカスケードです。まずすべての`.mqh`の配置を直します。
 
 ## エントリー基準
 
@@ -72,9 +73,11 @@ ADXの前足比上昇は任意設定です。初期版では、押し目・RSI50
 - ブローカー調整後の実SL距離でリスクロットを計算
 - 初期リスクを注文コメントに保存し、建値・トレーリングをR倍で管理
 
-## AI学習データログ（Phase 1）
+## AI学習データログ（Phase 1・2）
 
 `EnableDatasetLogging=true` の場合、raw setup成立後、安全フィルターより前に候補を保存します。発注された候補だけでなく、セッション外、既存ポジション、スプレッド、日次制限などで見送った候補も記録します。
+
+Phase 2では、保存できた全候補を仮想ポジションとして追跡します。実際に発注したかどうかには依存せず、候補時点の仮想Entry・SL・TPを固定して結果を付けます。
 
 出力先はMT4のファイル領域にある `AIData/` です。Strategy Testerでは `Tester/Files/AIData/` に分離されます。
 
@@ -83,21 +86,36 @@ AIData/
   run_manifest_<run_id>.csv
   signal_candidates_<run_id>.csv
   signal_decisions_<run_id>.csv
+  signal_outcomes_<run_id>.csv
   trade_results_<run_id>.csv
   runtime_errors_<run_id>.csv
 ```
 
-Phase 1で記録する内容:
+記録する内容:
 
 - 実行条件とバージョン情報
 - 候補時点の価格、ATR、RSI、ADX、H1方向、ローソク足形状
 - deterministic guardの最初の見送り理由
 - `signal_id ↔ signal_key ↔ ticket` の関連
+- 全候補の仮想TP/SL先着、MFE/MAE、経過バー数
 - 実取引の損益、R損益、保有時間、MFE/MAE
 
-注文コメントには長い`signal_id`ではなく短い`signal_key`を保存します。AI推論と仮想TP/SL Outcome追跡はまだ実装しておらず、現在の判断モードは常に`OFF`です。
+### 仮想Outcome判定
 
-Phase 1の実取引追跡は、現在のEA起動中に発注した注文だけを対象とします。EA再起動前から残っている注文の復元と二重出力防止はPhase 2で実装します。詳細は [`docs/ai-learning-data-spec.md`](docs/ai-learning-data-spec.md) を参照してください。
+- 追跡期間: M5の48バー
+- BUYのTP/SL判定: Bidを使用
+- SELLのTP/SL判定: Askを使用
+- `TP_FIRST`: SLより先にTPへ到達。学習ラベル1
+- `SL_FIRST`: TPより先にSLへ到達。学習ラベル0
+- `EXPIRED`: 48バー以内にどちらにも到達しない
+- `AMBIGUOUS`: 同一評価点でTP/SL双方が成立し、先着を確定できない
+- `TRUNCATED`: テスト終了やEA停止により追跡期間を完走できない
+
+`EXPIRED`、`AMBIGUOUS`、`TRUNCATED`のラベルは空欄とし、初期学習では除外します。Outcomeの正確な先着順を得るため、Strategy Testerは**全ティック**モデルを使用します。
+
+注文コメントには長い`signal_id`ではなく短い`signal_key`を保存します。AI推論はまだ実装しておらず、現在の判断モードは常に`OFF`です。
+
+現行版は実行中の候補だけをメモリで追跡します。EA再起動を跨ぐpending候補の復元は未対応で、停止時に残った候補は`TRUNCATED`として扱います。詳細は [`docs/ai-learning-data-spec.md`](docs/ai-learning-data-spec.md) を参照してください。
 
 ## 推奨ベースライン
 
@@ -111,6 +129,7 @@ Phase 1の実取引追跡は、現在のEA起動中に発注した注文だけ�
 - H1価格方向一致必須
 - 学習データログ: ON
 - 特徴量schema: `1.0.0`
+- Outcome: +1.5R / -1R先着、M5 48バー
 - 1取引リスク: 0.25%
 - SL/TP: ATRの1.0倍 / 1.5倍
 - 建値移動: OFF
@@ -129,7 +148,9 @@ Phase 1の実取引追跡は、現在のEA起動中に発注した注文だけ�
 1. MetaEditorでエラー0・警告0を確認
 2. ログOFF版とログON版で注文結果が一致することを確認
 3. candidateとdecisionが`signal_id`で1対1に結合できることを確認
-4. TRADE候補がticketとtrade resultへ結合できることを確認
-5. 次のPhase 2で全候補の仮想TP/SL Outcomeを追加
+4. outcomeがcandidateへ一意に結合できることを確認
+5. TRADE候補がticketとtrade resultへ結合できることを確認
+6. TP_FIRST / SL_FIRST / EXPIRED / TRUNCATEDの件数とMFE/MAEを確認
+7. 不整合チャートエラー0の履歴で学習用CSVを再生成
 
 リアル口座投入前に、変動スプレッドとスリッページを含むバックテストおよびフォワードテストを実施してください。
