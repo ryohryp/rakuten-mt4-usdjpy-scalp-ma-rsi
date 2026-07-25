@@ -3,6 +3,7 @@
 
 #include <AIData/RunContext.mqh>
 #include <AIData/CsvWriter.mqh>
+#include <AIData/OutcomeTracker.mqh>
 
 bool LogSignalCandidate(const string signalId,
                         const string signalKey,
@@ -11,8 +12,14 @@ bool LogSignalCandidate(const string signalId,
                         const string featureSchemaVersion,
                         const string labelVersion)
 {
-   return AiWriteCandidate(gAiRunId,signalId,signalKey,features,strategyVersion,
-                           featureSchemaVersion,labelVersion);
+   bool written=AiWriteCandidate(gAiRunId,signalId,signalKey,features,strategyVersion,
+                                 featureSchemaVersion,labelVersion);
+   if(!written) return false;
+
+   if(!AiRegisterPendingOutcome(signalId,signalKey,features))
+      AiWriteRuntimeError(gAiRunId,"OUTCOME_REGISTER","OUTCOME_REGISTER_FAILED",
+                          GetLastError(),"signal_outcomes",signalId);
+   return true;
 }
 
 bool LogSignalDecision(const string signalId,
