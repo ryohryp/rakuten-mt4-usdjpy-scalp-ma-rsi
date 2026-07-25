@@ -1,0 +1,2 @@
+run_id,signal_id,outcome_time,outcome,label_tp_before_sl,bars_to_outcome,seconds_to_outcome,mfe_pips,mae_pips,mfe_r,mae_r,outcome_tracker_version
+BT_EXAMPLE,BT_EXAMPLE|USDJPY|B|1751328000|001,2025.07.01 01:15:00,TP_FIRST,1,15,4500,6.40,2.10,1.6000,0.5250,tick_bidask_m5_h48_v1
