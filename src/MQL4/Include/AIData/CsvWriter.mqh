@@ -6,10 +6,12 @@
 int gAiManifestHandle=INVALID_HANDLE;
 int gAiCandidateHandle=INVALID_HANDLE;
 int gAiDecisionHandle=INVALID_HANDLE;
+int gAiOutcomeHandle=INVALID_HANDLE;
 int gAiTradeHandle=INVALID_HANDLE;
 int gAiErrorHandle=INVALID_HANDLE;
 int gAiCandidateRows=0;
 int gAiDecisionRows=0;
+int gAiOutcomeRows=0;
 int gAiTradeRows=0;
 int gAiErrorRows=0;
 int gAiFlushEveryN=1;
@@ -52,6 +54,7 @@ void AiLoggerShutdown()
    AiCloseHandle(gAiManifestHandle);
    AiCloseHandle(gAiCandidateHandle);
    AiCloseHandle(gAiDecisionHandle);
+   AiCloseHandle(gAiOutcomeHandle);
    AiCloseHandle(gAiTradeHandle);
    AiCloseHandle(gAiErrorHandle);
 }
@@ -64,12 +67,13 @@ bool AiLoggerInitialize(const string runId,const int flushEveryN)
    gAiManifestHandle=AiOpenCsv(prefix+"run_manifest_"+runId+".csv");
    gAiCandidateHandle=AiOpenCsv(prefix+"signal_candidates_"+runId+".csv");
    gAiDecisionHandle=AiOpenCsv(prefix+"signal_decisions_"+runId+".csv");
+   gAiOutcomeHandle=AiOpenCsv(prefix+"signal_outcomes_"+runId+".csv");
    gAiTradeHandle=AiOpenCsv(prefix+"trade_results_"+runId+".csv");
    gAiErrorHandle=AiOpenCsv(prefix+"runtime_errors_"+runId+".csv");
 
    if(gAiManifestHandle==INVALID_HANDLE || gAiCandidateHandle==INVALID_HANDLE ||
-      gAiDecisionHandle==INVALID_HANDLE || gAiTradeHandle==INVALID_HANDLE ||
-      gAiErrorHandle==INVALID_HANDLE)
+      gAiDecisionHandle==INVALID_HANDLE || gAiOutcomeHandle==INVALID_HANDLE ||
+      gAiTradeHandle==INVALID_HANDLE || gAiErrorHandle==INVALID_HANDLE)
    {
       Print("AIData logger initialization failed. Err=",GetLastError());
       AiLoggerShutdown();
@@ -95,6 +99,10 @@ bool AiLoggerInitialize(const string runId,const int flushEveryN)
                 "deterministic_eligible","failed_stage","reason_code","ai_mode",
                 "ai_probability","ai_threshold","model_version","final_decision",
                 "ticket","order_error");
+   if(FileSize(gAiOutcomeHandle)==0)
+      FileWrite(gAiOutcomeHandle,"run_id","signal_id","outcome_time","outcome",
+                "label_tp_before_sl","bars_to_outcome","seconds_to_outcome",
+                "mfe_pips","mae_pips","mfe_r","mae_r","outcome_tracker_version");
    if(FileSize(gAiTradeHandle)==0)
       FileWrite(gAiTradeHandle,"run_id","signal_id","signal_key","ticket","direction",
                 "entry_time","exit_time","lots","entry_price","exit_price",
@@ -108,6 +116,7 @@ bool AiLoggerInitialize(const string runId,const int flushEveryN)
    FileSeek(gAiManifestHandle,0,SEEK_END);
    FileSeek(gAiCandidateHandle,0,SEEK_END);
    FileSeek(gAiDecisionHandle,0,SEEK_END);
+   FileSeek(gAiOutcomeHandle,0,SEEK_END);
    FileSeek(gAiTradeHandle,0,SEEK_END);
    FileSeek(gAiErrorHandle,0,SEEK_END);
    return true;
@@ -185,6 +194,27 @@ bool AiWriteDecision(const string runId,
                           decision.finalDecision,ticket,orderError);
    if(written==0) return false;
    AiFlushByCount(gAiDecisionHandle,gAiDecisionRows);
+   return true;
+}
+
+bool AiWriteOutcome(const string runId,
+                    const PendingOutcome &pending,
+                    const string trackerVersion)
+{
+   if(gAiOutcomeHandle==INVALID_HANDLE) return false;
+   string label=pending.labelTpBeforeSl>=0
+      ? IntegerToString(pending.labelTpBeforeSl)
+      : "";
+   double mfeR=pending.riskPips>0 ? pending.mfePips/pending.riskPips : EMPTY_VALUE;
+   double maeR=pending.riskPips>0 ? pending.maePips/pending.riskPips : EMPTY_VALUE;
+   ResetLastError();
+   uint written=FileWrite(gAiOutcomeHandle,runId,pending.signalId,
+                          AiFormatTime(pending.outcomeTime),pending.outcome,label,
+                          pending.barsToOutcome,IntegerToString((int)pending.secondsToOutcome),
+                          AiFormatDouble(pending.mfePips,2),AiFormatDouble(pending.maePips,2),
+                          AiFormatDouble(mfeR,4),AiFormatDouble(maeR,4),trackerVersion);
+   if(written==0) return false;
+   AiFlushByCount(gAiOutcomeHandle,gAiOutcomeRows);
    return true;
 }
 
