@@ -1,7 +1,7 @@
 #ifndef __AI_DATA_CSV_WRITER_MQH__
 #define __AI_DATA_CSV_WRITER_MQH__
 
-#include <AIData/Types.mqh>
+#include <AIData/RunContext.mqh>
 
 int gAiManifestHandle=INVALID_HANDLE;
 int gAiCandidateHandle=INVALID_HANDLE;
@@ -125,8 +125,9 @@ bool AiWriteRunManifest(const string runId,
                         const string spreadMode)
 {
    if(gAiManifestHandle==INVALID_HANDLE) return false;
+   datetime manifestStart=gAiRunStartTime>0 ? gAiRunStartTime : startTime;
    ResetLastError();
-   uint written=FileWrite(gAiManifestHandle,runId,dataSource,AiFormatTime(startTime),Symbol(),
+   uint written=FileWrite(gAiManifestHandle,runId,dataSource,AiFormatTime(manifestStart),Symbol(),
                           signalTimeframe,eaVersion,strategyVersion,featureSchemaVersion,
                           labelVersion,parameterHash,spreadMode,AiFormatDouble(AccountBalance(),2),
                           (int)TerminalInfoInteger(TERMINAL_BUILD),AccountServer());
