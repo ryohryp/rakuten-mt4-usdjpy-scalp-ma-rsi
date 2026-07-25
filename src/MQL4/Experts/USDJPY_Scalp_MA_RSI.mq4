@@ -10,7 +10,7 @@
 #include <AIData/SignalLogger.mqh>
 #include <AIData/TradeResultLogger.mqh>
 
-#define EA_VERSION "phase1_logging_v1"
+#define EA_VERSION "phase2_outcome_v1"
 
 input int InpTimeframe=PERIOD_M5;
 input int FastEMA=5;
