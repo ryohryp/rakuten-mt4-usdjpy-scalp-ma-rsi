@@ -57,6 +57,7 @@ $requiredFiles = @(
     (Join-Path $targetIncludes 'Types.mqh'),
     (Join-Path $targetIncludes 'RunContext.mqh'),
     (Join-Path $targetIncludes 'CsvWriter.mqh'),
+    (Join-Path $targetIncludes 'OutcomeTracker.mqh'),
     (Join-Path $targetIncludes 'SignalLogger.mqh'),
     (Join-Path $targetIncludes 'TradeResultLogger.mqh')
 )
