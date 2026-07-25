@@ -55,7 +55,8 @@ $trades = @(Import-RequiredCsv -Prefix 'trade_results' -BasePath $AiDataPath -Id
 $errors = @(Import-RequiredCsv -Prefix 'runtime_errors' -BasePath $AiDataPath -Id $RunId)
 
 $manifestCountInvalid = $manifest.Count -ne 1
-$manifestEaVersionInvalid = $manifest.Count -eq 1 -and $manifest[0].ea_version -ne $ExpectedEaVersion
+$manifestEaVersion = if ($manifest.Count -eq 1) { $manifest[0].ea_version } else { '' }
+$manifestEaVersionInvalid = $manifest.Count -eq 1 -and $manifestEaVersion -ne $ExpectedEaVersion
 
 $candidateIds = @($candidates | ForEach-Object signal_id)
 $decisionIds = @($decisions | ForEach-Object signal_id)
@@ -117,7 +118,7 @@ $runIdMismatches = @(
 $summary = [ordered]@{
     RunId = $RunId
     ManifestRows = $manifest.Count
-    ManifestEaVersion = if ($manifest.Count -eq 1) { $manifest[0].ea_version } else { '' }
+    ManifestEaVersion = $manifestEaVersion
     ExpectedEaVersion = $ExpectedEaVersion
     Candidates = $candidates.Count
     Decisions = $decisions.Count
@@ -153,34 +154,39 @@ $outcomes |
     Select-Object Name, Count |
     Format-Table -AutoSize
 
-$failed = @(
-    @(
-        [int]$manifestCountInvalid,
-        [int]$manifestEaVersionInvalid,
-        $runIdMismatches.Count,
-        $duplicateCandidates.Count,
-        $duplicateDecisions.Count,
-        $duplicateOutcomes.Count,
-        $duplicateTradeSignals.Count,
-        $duplicateTradeTickets.Count,
-        $missingDecisions.Count,
-        $missingOutcomes.Count,
-        $orphanDecisions.Count,
-        $orphanOutcomes.Count,
-        $orphanTrades.Count,
-        $missingTradeResults.Count,
-        $tradesWithoutTradeDecision.Count,
-        $invalidOutcomeCodes.Count,
-        $invalidLabels.Count,
-        $invalidTrackerVersions.Count,
-        $invalidExpiredBars.Count,
-        $negativeExcursions.Count,
-        $errors.Count
-    ) | Where-Object { $_ -gt 0 }
+$checks = @(
+    [pscustomobject]@{ Check = 'ManifestRows'; Actual = $manifest.Count; Expected = 1; Passed = -not $manifestCountInvalid }
+    [pscustomobject]@{ Check = 'ManifestEaVersion'; Actual = $manifestEaVersion; Expected = $ExpectedEaVersion; Passed = -not $manifestEaVersionInvalid }
+    [pscustomobject]@{ Check = 'RunIdMismatches'; Actual = $runIdMismatches.Count; Expected = 0; Passed = $runIdMismatches.Count -eq 0 }
+    [pscustomobject]@{ Check = 'DuplicateCandidates'; Actual = $duplicateCandidates.Count; Expected = 0; Passed = $duplicateCandidates.Count -eq 0 }
+    [pscustomobject]@{ Check = 'DuplicateDecisions'; Actual = $duplicateDecisions.Count; Expected = 0; Passed = $duplicateDecisions.Count -eq 0 }
+    [pscustomobject]@{ Check = 'DuplicateOutcomes'; Actual = $duplicateOutcomes.Count; Expected = 0; Passed = $duplicateOutcomes.Count -eq 0 }
+    [pscustomobject]@{ Check = 'DuplicateTradeSignals'; Actual = $duplicateTradeSignals.Count; Expected = 0; Passed = $duplicateTradeSignals.Count -eq 0 }
+    [pscustomobject]@{ Check = 'DuplicateTradeTickets'; Actual = $duplicateTradeTickets.Count; Expected = 0; Passed = $duplicateTradeTickets.Count -eq 0 }
+    [pscustomobject]@{ Check = 'MissingDecisions'; Actual = $missingDecisions.Count; Expected = 0; Passed = $missingDecisions.Count -eq 0 }
+    [pscustomobject]@{ Check = 'MissingOutcomes'; Actual = $missingOutcomes.Count; Expected = 0; Passed = $missingOutcomes.Count -eq 0 }
+    [pscustomobject]@{ Check = 'OrphanDecisions'; Actual = $orphanDecisions.Count; Expected = 0; Passed = $orphanDecisions.Count -eq 0 }
+    [pscustomobject]@{ Check = 'OrphanOutcomes'; Actual = $orphanOutcomes.Count; Expected = 0; Passed = $orphanOutcomes.Count -eq 0 }
+    [pscustomobject]@{ Check = 'OrphanTrades'; Actual = $orphanTrades.Count; Expected = 0; Passed = $orphanTrades.Count -eq 0 }
+    [pscustomobject]@{ Check = 'MissingTradeResults'; Actual = $missingTradeResults.Count; Expected = 0; Passed = $missingTradeResults.Count -eq 0 }
+    [pscustomobject]@{ Check = 'TradesWithoutTradeDecision'; Actual = $tradesWithoutTradeDecision.Count; Expected = 0; Passed = $tradesWithoutTradeDecision.Count -eq 0 }
+    [pscustomobject]@{ Check = 'InvalidOutcomeCodes'; Actual = $invalidOutcomeCodes.Count; Expected = 0; Passed = $invalidOutcomeCodes.Count -eq 0 }
+    [pscustomobject]@{ Check = 'InvalidLabels'; Actual = $invalidLabels.Count; Expected = 0; Passed = $invalidLabels.Count -eq 0 }
+    [pscustomobject]@{ Check = 'InvalidTrackerVersions'; Actual = $invalidTrackerVersions.Count; Expected = 0; Passed = $invalidTrackerVersions.Count -eq 0 }
+    [pscustomobject]@{ Check = 'InvalidExpiredBars'; Actual = $invalidExpiredBars.Count; Expected = 0; Passed = $invalidExpiredBars.Count -eq 0 }
+    [pscustomobject]@{ Check = 'NegativeExcursions'; Actual = $negativeExcursions.Count; Expected = 0; Passed = $negativeExcursions.Count -eq 0 }
+    [pscustomobject]@{ Check = 'RuntimeErrors'; Actual = $errors.Count; Expected = 0; Passed = $errors.Count -eq 0 }
 )
 
-if ($failed.Count -gt 0) {
-    throw 'Outcome CSV validation failed. Review the counts above.'
+$failedChecks = @($checks | Where-Object { -not $_.Passed })
+if ($failedChecks.Count -gt 0) {
+    Write-Host ''
+    Write-Host 'Failed checks:' -ForegroundColor Red
+    $failedChecks |
+        Select-Object Check, Actual, Expected |
+        Format-Table -AutoSize
+
+    throw "Outcome CSV validation failed with $($failedChecks.Count) failed check(s)."
 }
 
 Write-Host 'Outcome CSV validation passed.' -ForegroundColor Green
