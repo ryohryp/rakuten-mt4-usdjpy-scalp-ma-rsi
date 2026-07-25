@@ -53,7 +53,9 @@ Phase 1で記録する内容:
 - `signal_id ↔ signal_key ↔ ticket` の関連
 - 実取引の損益、R損益、保有時間、MFE/MAE
 
-注文コメントには長い`signal_id`ではなく短い`signal_key`を保存します。AI推論と仮想TP/SL Outcome追跡はまだ実装しておらず、現在の判断モードは常に`OFF`です。詳細は [`docs/ai-learning-data-spec.md`](docs/ai-learning-data-spec.md) を参照してください。
+注文コメントには長い`signal_id`ではなく短い`signal_key`を保存します。AI推論と仮想TP/SL Outcome追跡はまだ実装しておらず、現在の判断モードは常に`OFF`です。
+
+Phase 1の実取引追跡は、現在のEA起動中に発注した注文だけを対象とします。EA再起動前から残っている注文の復元と二重出力防止はPhase 2で実装します。詳細は [`docs/ai-learning-data-spec.md`](docs/ai-learning-data-spec.md) を参照してください。
 
 ## 推奨ベースライン
 
