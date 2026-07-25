@@ -1,1 +1,0 @@
-Outcome tracking only. No AI gating and no trade-entry rule changes.
