@@ -57,6 +57,28 @@ struct TrackedTrade
    double maePips;
 };
 
+struct PendingOutcome
+{
+   bool resolved;
+   string signalId;
+   string signalKey;
+   int direction;
+   datetime signalTime;
+   int timeframe;
+   int maxBars;
+   double entryPrice;
+   double slPrice;
+   double tpPrice;
+   double riskPips;
+   double mfePips;
+   double maePips;
+   string outcome;
+   int labelTpBeforeSl;
+   datetime outcomeTime;
+   int barsToOutcome;
+   long secondsToOutcome;
+};
+
 void ResetDecisionResult(DecisionResult &result)
 {
    result.eligible=true;
